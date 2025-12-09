@@ -1,5 +1,5 @@
 import { useMemo, useState } from 'react';
-import { Headphones, Sparkles } from 'lucide-react';
+import { Headphones } from 'lucide-react';
 import { TranscriptSegmentRow } from './TranscriptSegmentRow';
 import { RhythmMap } from './RhythmMap';
 import type { ViewMode } from './ViewModeToggle';
@@ -68,11 +68,7 @@ export function TranscriptViewer({
 
       {/* Quick highlight legend */}
       <div className="flex flex-wrap items-center gap-4 text-xs text-slate-400">
-        <span className="flex items-center gap-1.5">
-          <Sparkles className="h-3 w-3 text-slate-500" />
-          Tap any word for details
-        </span>
-        <div className="flex items-center gap-3 border-l border-slate-700 pl-4">
+        <div className="flex items-center gap-3">
           {highlightCounts.fillers > 0 && (
             <span className="flex items-center gap-1">
               <span className="w-2 h-2 rounded-full bg-rose-400" />

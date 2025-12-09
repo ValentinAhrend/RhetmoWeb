@@ -70,9 +70,6 @@ export function SessionDetailPage() {
         <div className="space-y-4">
           <div className="flex items-center justify-between">
             <h2 className="text-sm uppercase tracking-[0.15em] text-slate-400">Transcript & highlights</h2>
-            {hasAnalysis ? (
-              <p className="text-xs text-slate-400">Click a segment to align audio and coaching cues.</p>
-            ) : null}
           </div>
           <TranscriptViewer
             session={session}

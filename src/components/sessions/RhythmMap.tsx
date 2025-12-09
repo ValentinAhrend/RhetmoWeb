@@ -123,7 +123,11 @@ export function RhythmMap({ segments, issues = [], activeSegmentId, onSegmentCli
   const handleMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!timelineRef.current || !totalDuration) return;
     const rect = timelineRef.current.getBoundingClientRect();
-    const pct = Math.min(Math.max((e.clientX - rect.left) / rect.width, 0), 1);
+    // Account for the label width (60px) + gap (12px) = 72px offset
+    const labelOffset = 72;
+    const trackWidth = rect.width - labelOffset;
+    const mouseX = e.clientX - rect.left - labelOffset;
+    const pct = Math.min(Math.max(mouseX / trackWidth, 0), 1);
     setHoverPct(pct);
   };
 
@@ -172,7 +176,7 @@ export function RhythmMap({ segments, issues = [], activeSegmentId, onSegmentCli
         {/* Hover line */}
         {hoverPct !== null && (
           <div
-            style={{ left: `calc(72px + ${hoverPct * 100}% * (100% - 72px) / 100%)` }}
+            style={{ left: `calc(72px + (100% - 72px) * ${hoverPct})` }}
             className="pointer-events-none absolute top-0 bottom-0 z-20 w-px bg-white/40"
           >
             <div className="absolute left-1/2 -translate-x-1/2 -top-6 rounded bg-slate-800 border border-slate-700 px-2 py-0.5 text-[10px] text-white whitespace-nowrap">

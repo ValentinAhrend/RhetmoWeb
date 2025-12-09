@@ -9,7 +9,7 @@ interface TopBarProps {
 
 export function TopBar({ title, subtitle, actions }: TopBarProps) {
   return (
-    <header className="sticky top-0 z-20 flex flex-col gap-4 border-b border-white/5 bg-slate-950/70 px-4 py-4 backdrop-blur-xl md:flex-row md:items-center md:justify-between md:px-8">
+    <header className="flex-shrink-0 z-20 flex flex-col gap-4 border-b border-white/5 bg-slate-950/70 px-4 py-4 backdrop-blur-xl md:flex-row md:items-center md:justify-between md:px-8">
       <div>
         <h1 className="font-display text-2xl font-semibold leading-tight text-white md:text-3xl">
           {title}

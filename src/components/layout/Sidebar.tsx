@@ -27,7 +27,7 @@ function NavItem({ to, label, icon: Icon }: (typeof navItems)[number]) {
 
 export function Sidebar() {
   return (
-    <aside className="hidden lg:flex h-screen w-64 flex-col border-r border-white/5 bg-slate-950/70 px-5 py-6 backdrop-blur-xl">
+    <aside className="hidden lg:flex h-screen w-64 flex-col border-r border-white/5 bg-slate-950/70 px-5 py-6 backdrop-blur-xl sticky top-0">
       <div className="flex items-center gap-3 px-2">
         <img src="/brand/rhetmoLogoWhite.svg" alt="Rhemto logo" className="h-10 w-auto" />
       </div>
