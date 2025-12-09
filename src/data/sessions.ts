@@ -1,5 +1,5 @@
 import { MOCK_SESSIONS, getMockSessionById } from '@/mock/mockSession';
-import type { Session } from '@/mock/sessionTypes';
+import type { Session } from '@/types/sessions';
 
 const delay = (ms = 160) => new Promise((resolve) => setTimeout(resolve, ms));
 

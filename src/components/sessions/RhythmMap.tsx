@@ -1,6 +1,6 @@
 import clsx from 'clsx';
 import { useMemo, useRef, useState } from 'react';
-import { Sparkles } from 'lucide-react';
+import { Flag, Sparkles } from 'lucide-react';
 import type { SessionIssue, TranscriptSegment, Tag } from '@/types/sessions';
 
 interface RhythmMapProps {
@@ -95,12 +95,14 @@ export function RhythmMap({ segments, issues = [], activeSegmentId, onSegmentCli
       });
 
       // Token-level tags
-      (segment.tokens ?? []).forEach((token) => {
+      const tokens = segment.kind === 'speech' ? segment.tokens : [];
+      tokens.forEach((token) => {
+        const tokenTime = token.startMs;
         token.tags.forEach((tag) => {
           if (tag.kind === 'filler') {
             list.push({
               id: `${token.id}-${tag.id}`,
-              timeMs: token.startMs ?? mid,
+              timeMs: tokenTime,
               kind: 'filler',
               severity: tag.severity,
               label: tag.label,
@@ -117,7 +119,7 @@ export function RhythmMap({ segments, issues = [], activeSegmentId, onSegmentCli
             const kind = mapKind[tag.kind];
             list.push({
               id: `${token.id}-${tag.id}`,
-              timeMs: token.startMs ?? mid,
+              timeMs: tokenTime,
               kind,
               severity: tag.severity,
               label: tag.label,

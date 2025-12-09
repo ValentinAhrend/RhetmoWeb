@@ -1,6 +1,42 @@
 // src/mock/mockSessions.ts
 
-import { Session } from './sessionTypes';
+import type { Session, Tag, TranscriptToken } from '@/types/sessions';
+
+type TokenTagMap = Partial<Record<number, Tag[]>>;
+
+function createTimedTokens({
+  segmentId,
+  text,
+  startMs,
+  endMs,
+  tokenPrefix,
+  taggedIndices = {},
+}: {
+  segmentId: string;
+  text: string;
+  startMs: number;
+  endMs: number;
+  tokenPrefix?: string;
+  taggedIndices?: TokenTagMap;
+}): TranscriptToken[] {
+  const words = text.trim().split(/\s+/).filter(Boolean);
+  const duration = endMs - startMs;
+  const step = duration / Math.max(words.length, 1);
+
+  return words.map((word, index) => {
+    const tokenStart = Math.round(startMs + index * step);
+    const tokenEnd =
+      index === words.length - 1 ? endMs : Math.round(startMs + (index + 1) * step);
+
+    return {
+      id: `${tokenPrefix ?? `${segmentId}-tok-`}${index + 1}`,
+      startMs: tokenStart,
+      endMs: tokenEnd,
+      text: word,
+      tags: taggedIndices[index] ?? [],
+    };
+  });
+}
 
 export const MOCK_SESSIONS: Session[] = [
   {
@@ -24,52 +60,14 @@ export const MOCK_SESSIONS: Session[] = [
           kind: 'speech',
           text:
             'Hi everyone, I am Tobias, co-founder of PulseSpeak. Today I will show you how we blend audio, physiology, and motion to make public speaking coaching feel effortless. You will see where I speed, where I hedge, and where the watch can catch it live.',
-          tokens: [
-            { id: 's1-tok-1-1', text: 'Hi', tags: [] },
-            { id: 's1-tok-1-2', text: 'everyone,', tags: [] },
-            { id: 's1-tok-1-3', text: 'I', tags: [] },
-            { id: 's1-tok-1-4', text: 'am', tags: [] },
-            { id: 's1-tok-1-5', text: 'Tobias,', tags: [] },
-            { id: 's1-tok-1-6', text: 'co-founder', tags: [] },
-            { id: 's1-tok-1-7', text: 'of', tags: [] },
-            { id: 's1-tok-1-8', text: 'PulseSpeak.', tags: [] },
-            { id: 's1-tok-1-9', text: 'Today', tags: [] },
-            { id: 's1-tok-1-10', text: 'I', tags: [] },
-            { id: 's1-tok-1-11', text: 'will', tags: [] },
-            { id: 's1-tok-1-12', text: 'show', tags: [] },
-            { id: 's1-tok-1-13', text: 'you', tags: [] },
-            { id: 's1-tok-1-14', text: 'how', tags: [] },
-            { id: 's1-tok-1-15', text: 'we', tags: [] },
-            { id: 's1-tok-1-16', text: 'blend', tags: [] },
-            { id: 's1-tok-1-17', text: 'audio,', tags: [] },
-            { id: 's1-tok-1-18', text: 'physiology,', tags: [] },
-            { id: 's1-tok-1-19', text: 'and', tags: [] },
-            { id: 's1-tok-1-20', text: 'motion', tags: [] },
-            { id: 's1-tok-1-21', text: 'to', tags: [] },
-            { id: 's1-tok-1-22', text: 'make', tags: [] },
-            { id: 's1-tok-1-23', text: 'public', tags: [] },
-            { id: 's1-tok-1-24', text: 'speaking', tags: [] },
-            { id: 's1-tok-1-25', text: 'coaching', tags: [] },
-            { id: 's1-tok-1-26', text: 'feel', tags: [] },
-            { id: 's1-tok-1-27', text: 'effortless.', tags: [] },
-            { id: 's1-tok-1-28', text: 'You', tags: [] },
-            { id: 's1-tok-1-29', text: 'will', tags: [] },
-            { id: 's1-tok-1-30', text: 'see', tags: [] },
-            { id: 's1-tok-1-31', text: 'where', tags: [] },
-            { id: 's1-tok-1-32', text: 'I', tags: [] },
-            { id: 's1-tok-1-33', text: 'speed,', tags: [] },
-            { id: 's1-tok-1-34', text: 'where', tags: [] },
-            { id: 's1-tok-1-35', text: 'I', tags: [] },
-            { id: 's1-tok-1-36', text: 'hedge,', tags: [] },
-            { id: 's1-tok-1-37', text: 'and', tags: [] },
-            { id: 's1-tok-1-38', text: 'where', tags: [] },
-            { id: 's1-tok-1-39', text: 'the', tags: [] },
-            { id: 's1-tok-1-40', text: 'watch', tags: [] },
-            { id: 's1-tok-1-41', text: 'can', tags: [] },
-            { id: 's1-tok-1-42', text: 'catch', tags: [] },
-            { id: 's1-tok-1-43', text: 'it', tags: [] },
-            { id: 's1-tok-1-44', text: 'live.', tags: [] },
-          ],
+          tokens: createTimedTokens({
+            segmentId: 's1-seg-1',
+            text:
+              'Hi everyone, I am Tobias, co-founder of PulseSpeak. Today I will show you how we blend audio, physiology, and motion to make public speaking coaching feel effortless. You will see where I speed, where I hedge, and where the watch can catch it live.',
+            startMs: 0,
+            endMs: 14000,
+            tokenPrefix: 's1-tok-1-',
+          }),
           tags: [
             {
               id: 's1-seg-1-structure',
@@ -102,54 +100,14 @@ export const MOCK_SESSIONS: Session[] = [
           kind: 'speech',
           text:
             'The problem is simple: speakers rehearse alone, get feedback that is vague, and never connect stress signals to how they sound. We collect the full picture — words, pace, heart rate, and movement — then translate it into one or two concrete focus points per session.',
-          tokens: [
-            { id: 's1-tok-3-1', text: 'The', tags: [] },
-            { id: 's1-tok-3-2', text: 'problem', tags: [] },
-            { id: 's1-tok-3-3', text: 'is', tags: [] },
-            { id: 's1-tok-3-4', text: 'simple:', tags: [] },
-            { id: 's1-tok-3-5', text: 'speakers', tags: [] },
-            { id: 's1-tok-3-6', text: 'rehearse', tags: [] },
-            { id: 's1-tok-3-7', text: 'alone,', tags: [] },
-            { id: 's1-tok-3-8', text: 'get', tags: [] },
-            { id: 's1-tok-3-9', text: 'feedback', tags: [] },
-            { id: 's1-tok-3-10', text: 'that', tags: [] },
-            { id: 's1-tok-3-11', text: 'is', tags: [] },
-            { id: 's1-tok-3-12', text: 'vague,', tags: [] },
-            { id: 's1-tok-3-13', text: 'and', tags: [] },
-            { id: 's1-tok-3-14', text: 'never', tags: [] },
-            { id: 's1-tok-3-15', text: 'connect', tags: [] },
-            { id: 's1-tok-3-16', text: 'stress', tags: [] },
-            { id: 's1-tok-3-17', text: 'signals', tags: [] },
-            { id: 's1-tok-3-18', text: 'to', tags: [] },
-            { id: 's1-tok-3-19', text: 'how', tags: [] },
-            { id: 's1-tok-3-20', text: 'they', tags: [] },
-            { id: 's1-tok-3-21', text: 'sound.', tags: [] },
-            { id: 's1-tok-3-22', text: 'We', tags: [] },
-            { id: 's1-tok-3-23', text: 'collect', tags: [] },
-            { id: 's1-tok-3-24', text: 'the', tags: [] },
-            { id: 's1-tok-3-25', text: 'full', tags: [] },
-            { id: 's1-tok-3-26', text: 'picture', tags: [] },
-            { id: 's1-tok-3-27', text: '—', tags: [] },
-            { id: 's1-tok-3-28', text: 'words,', tags: [] },
-            { id: 's1-tok-3-29', text: 'pace,', tags: [] },
-            { id: 's1-tok-3-30', text: 'heart', tags: [] },
-            { id: 's1-tok-3-31', text: 'rate,', tags: [] },
-            { id: 's1-tok-3-32', text: 'and', tags: [] },
-            { id: 's1-tok-3-33', text: 'movement', tags: [] },
-            { id: 's1-tok-3-34', text: '—', tags: [] },
-            { id: 's1-tok-3-35', text: 'then', tags: [] },
-            { id: 's1-tok-3-36', text: 'translate', tags: [] },
-            { id: 's1-tok-3-37', text: 'it', tags: [] },
-            { id: 's1-tok-3-38', text: 'into', tags: [] },
-            { id: 's1-tok-3-39', text: 'one', tags: [] },
-            { id: 's1-tok-3-40', text: 'or', tags: [] },
-            { id: 's1-tok-3-41', text: 'two', tags: [] },
-            { id: 's1-tok-3-42', text: 'concrete', tags: [] },
-            { id: 's1-tok-3-43', text: 'focus', tags: [] },
-            { id: 's1-tok-3-44', text: 'points', tags: [] },
-            { id: 's1-tok-3-45', text: 'per', tags: [] },
-            { id: 's1-tok-3-46', text: 'session.', tags: [] },
-          ],
+          tokens: createTimedTokens({
+            segmentId: 's1-seg-3',
+            text:
+              'The problem is simple: speakers rehearse alone, get feedback that is vague, and never connect stress signals to how they sound. We collect the full picture — words, pace, heart rate, and movement — then translate it into one or two concrete focus points per session.',
+            startMs: 17000,
+            endMs: 42000,
+            tokenPrefix: 's1-tok-3-',
+          }),
           tags: [
             {
               id: 's1-seg-3-structure',
@@ -166,22 +124,15 @@ export const MOCK_SESSIONS: Session[] = [
           kind: 'speech',
           text:
             'In early pilots, people rush the explanation. I catch myself going, um, we capture everything, like, really everything, which makes it hard to digest. This is exactly where the watch nudges me. I need to slow the middle third.',
-          tokens: [
-            { id: 's1-tok-4-1', text: 'In', tags: [] },
-            { id: 's1-tok-4-2', text: 'early', tags: [] },
-            { id: 's1-tok-4-3', text: 'pilots,', tags: [] },
-            { id: 's1-tok-4-4', text: 'people', tags: [] },
-            { id: 's1-tok-4-5', text: 'rush', tags: [] },
-            { id: 's1-tok-4-6', text: 'the', tags: [] },
-            { id: 's1-tok-4-7', text: 'explanation.', tags: [] },
-            { id: 's1-tok-4-8', text: 'I', tags: [] },
-            { id: 's1-tok-4-9', text: 'catch', tags: [] },
-            { id: 's1-tok-4-10', text: 'myself', tags: [] },
-            { id: 's1-tok-4-11', text: 'going,', tags: [] },
-            {
-              id: 's1-tok-4-12',
-              text: 'um,',
-              tags: [
+          tokens: createTimedTokens({
+            segmentId: 's1-seg-4',
+            text:
+              'In early pilots, people rush the explanation. I catch myself going, um, we capture everything, like, really everything, which makes it hard to digest. This is exactly where the watch nudges me. I need to slow the middle third.',
+            startMs: 42000,
+            endMs: 66000,
+            tokenPrefix: 's1-tok-4-',
+            taggedIndices: {
+              11: [
                 {
                   id: 's1-tag-4-filler-um',
                   kind: 'filler',
@@ -190,14 +141,7 @@ export const MOCK_SESSIONS: Session[] = [
                   data: { normalized: 'um' },
                 },
               ],
-            },
-            { id: 's1-tok-4-13', text: 'we', tags: [] },
-            { id: 's1-tok-4-14', text: 'capture', tags: [] },
-            { id: 's1-tok-4-15', text: 'everything,', tags: [] },
-            {
-              id: 's1-tok-4-16',
-              text: 'like,',
-              tags: [
+              15: [
                 {
                   id: 's1-tag-4-filler-like',
                   kind: 'filler',
@@ -207,30 +151,7 @@ export const MOCK_SESSIONS: Session[] = [
                 },
               ],
             },
-            { id: 's1-tok-4-17', text: 'really', tags: [] },
-            { id: 's1-tok-4-18', text: 'everything,', tags: [] },
-            { id: 's1-tok-4-19', text: 'which', tags: [] },
-            { id: 's1-tok-4-20', text: 'makes', tags: [] },
-            { id: 's1-tok-4-21', text: 'it', tags: [] },
-            { id: 's1-tok-4-22', text: 'hard', tags: [] },
-            { id: 's1-tok-4-23', text: 'to', tags: [] },
-            { id: 's1-tok-4-24', text: 'digest.', tags: [] },
-            { id: 's1-tok-4-25', text: 'This', tags: [] },
-            { id: 's1-tok-4-26', text: 'is', tags: [] },
-            { id: 's1-tok-4-27', text: 'exactly', tags: [] },
-            { id: 's1-tok-4-28', text: 'where', tags: [] },
-            { id: 's1-tok-4-29', text: 'the', tags: [] },
-            { id: 's1-tok-4-30', text: 'watch', tags: [] },
-            { id: 's1-tok-4-31', text: 'nudges', tags: [] },
-            { id: 's1-tok-4-32', text: 'me.', tags: [] },
-            { id: 's1-tok-4-33', text: 'I', tags: [] },
-            { id: 's1-tok-4-34', text: 'need', tags: [] },
-            { id: 's1-tok-4-35', text: 'to', tags: [] },
-            { id: 's1-tok-4-36', text: 'slow', tags: [] },
-            { id: 's1-tok-4-37', text: 'the', tags: [] },
-            { id: 's1-tok-4-38', text: 'middle', tags: [] },
-            { id: 's1-tok-4-39', text: 'third.', tags: [] },
-          ],
+          }),
           tags: [
             {
               id: 's1-seg-4-fast',
@@ -269,6 +190,14 @@ export const MOCK_SESSIONS: Session[] = [
           kind: 'speech',
           text:
             'Our iPhone app records studio-grade audio, while the Apple Watch streams heart rate, HRV, and micro-movement. The dashboard lines these up on a timeline, so you can see that the spike at minute two matched the moment you sped through your value prop.',
+          tokens: createTimedTokens({
+            segmentId: 's1-seg-6',
+            text:
+              'Our iPhone app records studio-grade audio, while the Apple Watch streams heart rate, HRV, and micro-movement. The dashboard lines these up on a timeline, so you can see that the spike at minute two matched the moment you sped through your value prop.',
+            startMs: 71000,
+            endMs: 105000,
+            tokenPrefix: 's1-tok-6-',
+          }),
           tags: [
             {
               id: 's1-seg-6-structure',
@@ -291,6 +220,14 @@ export const MOCK_SESSIONS: Session[] = [
           kind: 'speech',
           text:
             'Early teams use this to rehearse investor pitches, standups, and interviews. One founder cut filler words by thirty percent in a week by catching the exact phrases that triggered them. Another stabilized pace by setting a personalized WPM guardrail and feeling the watch nudge when rushing.',
+          tokens: createTimedTokens({
+            segmentId: 's1-seg-7',
+            text:
+              'Early teams use this to rehearse investor pitches, standups, and interviews. One founder cut filler words by thirty percent in a week by catching the exact phrases that triggered them. Another stabilized pace by setting a personalized WPM guardrail and feeling the watch nudge when rushing.',
+            startMs: 105000,
+            endMs: 136000,
+            tokenPrefix: 's1-tok-7-',
+          }),
           tags: [
             {
               id: 's1-seg-7-good-emphasis',
@@ -307,6 +244,14 @@ export const MOCK_SESSIONS: Session[] = [
           kind: 'speech',
           text:
             'We monetize via a team plan, because managers see every presentation and meeting as a chance to coach. The watch brings the same cues into live talks, tapping you when you speed or when your HR jumps.',
+          tokens: createTimedTokens({
+            segmentId: 's1-seg-8',
+            text:
+              'We monetize via a team plan, because managers see every presentation and meeting as a chance to coach. The watch brings the same cues into live talks, tapping you when you speed or when your HR jumps.',
+            startMs: 136000,
+            endMs: 168000,
+            tokenPrefix: 's1-tok-8-',
+          }),
           tags: [
             {
               id: 's1-seg-8-structure',
@@ -337,6 +282,14 @@ export const MOCK_SESSIONS: Session[] = [
           kind: 'speech',
           text:
             'Let me walk you through an example timeline: at 02:10 you see a long pause, the watch shows a heart-rate spike, and the transcript flags the phrase “sort of maybe”. The system suggests slowing the pace and swapping the hedge for a directive sentence.',
+          tokens: createTimedTokens({
+            segmentId: 's1-seg-10',
+            text:
+              'Let me walk you through an example timeline: at 02:10 you see a long pause, the watch shows a heart-rate spike, and the transcript flags the phrase “sort of maybe”. The system suggests slowing the pace and swapping the hedge for a directive sentence.',
+            startMs: 172000,
+            endMs: 204000,
+            tokenPrefix: 's1-tok-10-',
+          }),
           tags: [
             {
               id: 's1-seg-10-hedging',
@@ -353,6 +306,14 @@ export const MOCK_SESSIONS: Session[] = [
           kind: 'speech',
           text:
             'Our analysis pipeline is modular — we can plug in new ASR models, emotion classifiers, or motion features. What matters for the user is the coaching output stays simple: one to three cues, clear targets, and a way to practice them live.',
+          tokens: createTimedTokens({
+            segmentId: 's1-seg-11',
+            text:
+              'Our analysis pipeline is modular — we can plug in new ASR models, emotion classifiers, or motion features. What matters for the user is the coaching output stays simple: one to three cues, clear targets, and a way to practice them live.',
+            startMs: 204000,
+            endMs: 226000,
+            tokenPrefix: 's1-tok-11-',
+          }),
           tags: [
             {
               id: 's1-seg-11-complex',
@@ -369,6 +330,14 @@ export const MOCK_SESSIONS: Session[] = [
           kind: 'speech',
           text:
             'By the end of each week, speakers see filler trends, pace stability, and a calmness score. The goal is confident delivery, not perfection. Today, we are asking for early design partners to shape the next phase.',
+          tokens: createTimedTokens({
+            segmentId: 's1-seg-12',
+            text:
+              'By the end of each week, speakers see filler trends, pace stability, and a calmness score. The goal is confident delivery, not perfection. Today, we are asking for early design partners to shape the next phase.',
+            startMs: 226000,
+            endMs: 258000,
+            tokenPrefix: 's1-tok-12-',
+          }),
           tags: [
             {
               id: 's1-seg-12-structure',
@@ -454,6 +423,14 @@ export const MOCK_SESSIONS: Session[] = [
           kind: 'speech',
           text:
             "When I lead teams, my strength is creating calm structure in fast-changing projects. I make the goal visible, set short checkpoints, and make sure every voice is heard early so we avoid late surprises.",
+          tokens: createTimedTokens({
+            segmentId: 's2-seg-1',
+            text:
+              "When I lead teams, my strength is creating calm structure in fast-changing projects. I make the goal visible, set short checkpoints, and make sure every voice is heard early so we avoid late surprises.",
+            startMs: 0,
+            endMs: 14000,
+            tokenPrefix: 's2-tok-1-',
+          }),
           tags: [
             {
               id: 's2-seg-1-structure',
@@ -478,6 +455,14 @@ export const MOCK_SESSIONS: Session[] = [
           kind: 'speech',
           text:
             "A recent example: we rebuilt our onboarding in six weeks. Each week I ran a retro, looked at heart-rate spikes in my own updates, and noticed I sped up when explaining trade-offs. That told me to pause and let the team push back before I moved on.",
+          tokens: createTimedTokens({
+            segmentId: 's2-seg-3',
+            text:
+              "A recent example: we rebuilt our onboarding in six weeks. Each week I ran a retro, looked at heart-rate spikes in my own updates, and noticed I sped up when explaining trade-offs. That told me to pause and let the team push back before I moved on.",
+            startMs: 17000,
+            endMs: 52000,
+            tokenPrefix: 's2-tok-3-',
+          }),
           tags: [
             {
               id: 's2-seg-3-fast',
@@ -494,36 +479,15 @@ export const MOCK_SESSIONS: Session[] = [
           kind: 'speech',
           text:
             "On conflict: when two engineers disagreed about architecture, I invited them to map the constraints, then I mirrored their words back. It slowed me down and cut the fillers, because I had to listen. We shipped a hybrid approach with no resentment.",
-          tokens: [
-            { id: 's2-tok-4-1', text: 'On', tags: [] },
-            { id: 's2-tok-4-2', text: 'conflict:', tags: [] },
-            { id: 's2-tok-4-3', text: 'when', tags: [] },
-            { id: 's2-tok-4-4', text: 'two', tags: [] },
-            { id: 's2-tok-4-5', text: 'engineers', tags: [] },
-            { id: 's2-tok-4-6', text: 'disagreed', tags: [] },
-            { id: 's2-tok-4-7', text: 'about', tags: [] },
-            { id: 's2-tok-4-8', text: 'architecture,', tags: [] },
-            { id: 's2-tok-4-9', text: 'I', tags: [] },
-            { id: 's2-tok-4-10', text: 'invited', tags: [] },
-            { id: 's2-tok-4-11', text: 'them', tags: [] },
-            { id: 's2-tok-4-12', text: 'to', tags: [] },
-            { id: 's2-tok-4-13', text: 'map', tags: [] },
-            { id: 's2-tok-4-14', text: 'the', tags: [] },
-            { id: 's2-tok-4-15', text: 'constraints,', tags: [] },
-            { id: 's2-tok-4-16', text: 'then', tags: [] },
-            { id: 's2-tok-4-17', text: 'I', tags: [] },
-            { id: 's2-tok-4-18', text: 'mirrored', tags: [] },
-            { id: 's2-tok-4-19', text: 'their', tags: [] },
-            { id: 's2-tok-4-20', text: 'words', tags: [] },
-            { id: 's2-tok-4-21', text: 'back.', tags: [] },
-            { id: 's2-tok-4-22', text: 'It', tags: [] },
-            { id: 's2-tok-4-23', text: 'slowed', tags: [] },
-            { id: 's2-tok-4-24', text: 'me', tags: [] },
-            { id: 's2-tok-4-25', text: 'down', tags: [] },
-            {
-              id: 's2-tok-4-26',
-              text: 'and',
-              tags: [
+          tokens: createTimedTokens({
+            segmentId: 's2-seg-4',
+            text:
+              "On conflict: when two engineers disagreed about architecture, I invited them to map the constraints, then I mirrored their words back. It slowed me down and cut the fillers, because I had to listen. We shipped a hybrid approach with no resentment.",
+            startMs: 52000,
+            endMs: 84000,
+            tokenPrefix: 's2-tok-4-',
+            taggedIndices: {
+              25: [
                 {
                   id: 's2-tag-4-filler-and',
                   kind: 'filler',
@@ -532,15 +496,7 @@ export const MOCK_SESSIONS: Session[] = [
                 },
               ],
             },
-            { id: 's2-tok-4-27', text: 'cut', tags: [] },
-            { id: 's2-tok-4-28', text: 'the', tags: [] },
-            { id: 's2-tok-4-29', text: 'fillers,', tags: [] },
-            { id: 's2-tok-4-30', text: 'because', tags: [] },
-            { id: 's2-tok-4-31', text: 'I', tags: [] },
-            { id: 's2-tok-4-32', text: 'had', tags: [] },
-            { id: 's2-tok-4-33', text: 'to', tags: [] },
-            { id: 's2-tok-4-34', text: 'listen.', tags: [] },
-          ],
+          }),
           tags: [
             {
               id: 's2-seg-4-structure',
@@ -557,6 +513,14 @@ export const MOCK_SESSIONS: Session[] = [
           kind: 'speech',
           text:
             "My weakness: I sometimes over-explain to prove I've thought it through. When I notice that rising pace and the fillers creeping in, I switch to a headline-first answer and pause for a beat.",
+          tokens: createTimedTokens({
+            segmentId: 's2-seg-5',
+            text:
+              "My weakness: I sometimes over-explain to prove I've thought it through. When I notice that rising pace and the fillers creeping in, I switch to a headline-first answer and pause for a beat.",
+            startMs: 84000,
+            endMs: 116000,
+            tokenPrefix: 's2-tok-5-',
+          }),
           tags: [
             {
               id: 's2-seg-5-hedging',
@@ -579,6 +543,14 @@ export const MOCK_SESSIONS: Session[] = [
           kind: 'speech',
           text:
             "Growth plan: in the next quarter I want to coach two teammates on concise updates, because teaching the skill forces me to model it. I will also keep heart-rate alerts on during live meetings to catch stress before it shows up in my tone.",
+          tokens: createTimedTokens({
+            segmentId: 's2-seg-6',
+            text:
+              "Growth plan: in the next quarter I want to coach two teammates on concise updates, because teaching the skill forces me to model it. I will also keep heart-rate alerts on during live meetings to catch stress before it shows up in my tone.",
+            startMs: 116000,
+            endMs: 148000,
+            tokenPrefix: 's2-tok-6-',
+          }),
           tags: [
             {
               id: 's2-seg-6-good-emphasis',
@@ -595,6 +567,14 @@ export const MOCK_SESSIONS: Session[] = [
           kind: 'speech',
           text:
             "If we worked together, you would see me run tight agendas, ask for dissent early, and give clear summaries. The dashboard shows exactly where my pace drops or fillers spike so I can correct in the next standup.",
+          tokens: createTimedTokens({
+            segmentId: 's2-seg-7',
+            text:
+              "If we worked together, you would see me run tight agendas, ask for dissent early, and give clear summaries. The dashboard shows exactly where my pace drops or fillers spike so I can correct in the next standup.",
+            startMs: 148000,
+            endMs: 182000,
+            tokenPrefix: 's2-tok-7-',
+          }),
           tags: [
             {
               id: 's2-seg-7-structure',
@@ -611,6 +591,14 @@ export const MOCK_SESSIONS: Session[] = [
           kind: 'speech',
           text:
             'Thank you for the questions — happy to dive into how I coach teams through presentations or conflict in more depth.',
+          tokens: createTimedTokens({
+            segmentId: 's2-seg-8',
+            text:
+              'Thank you for the questions — happy to dive into how I coach teams through presentations or conflict in more depth.',
+            startMs: 182000,
+            endMs: 210000,
+            tokenPrefix: 's2-tok-8-',
+          }),
           tags: [],
         },
       ],
