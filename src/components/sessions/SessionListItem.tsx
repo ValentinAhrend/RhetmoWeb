@@ -1,4 +1,4 @@
-import { ArrowRight, Clock, HeartPulse, Mic2 } from 'lucide-react';
+import { ArrowRight, Clock, HeartPulse } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { SessionContextBadge } from './SessionContextBadge';
 import { SessionStatusBadge } from './SessionStatusBadge';
@@ -23,9 +23,7 @@ export function SessionListItem({ session }: { session: Session }) {
     >
       <div className="flex items-center justify-between gap-3">
         <div className="flex items-center gap-3">
-          <div className="flex h-11 w-11 items-center justify-center rounded-2xl bg-gradient-to-br from-emerald-500/80 to-amber-400/70 text-slate-950 shadow-soft">
-            <Mic2 className="h-5 w-5" strokeWidth={1.75} />
-          </div>
+          <img src="/brand/rhetmoIcon.svg" alt="Rhetmo icon" className="h-10 w-10" />
           <div>
             <p className="font-display text-lg font-semibold text-white">{session.title}</p>
             <div className="flex items-center gap-2 text-xs text-slate-300">

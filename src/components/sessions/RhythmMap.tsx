@@ -1,11 +1,10 @@
 import clsx from 'clsx';
 import { useMemo, useRef, useState } from 'react';
-import { Flag, Sparkles } from 'lucide-react';
-import type { SessionIssue, TranscriptSegment, Tag } from '@/types/sessions';
+import type { SessionIssue, TranscriptSegment } from '@/types/sessions';
 
 interface RhythmMapProps {
   segments: TranscriptSegment[];
-  issues?: SessionIssue[]; // kept for future; not rendered as cues to avoid confusion
+  issues?: SessionIssue[];
   activeSegmentId?: string;
   onSegmentClick?: (segmentId: string) => void;
 }
@@ -21,49 +20,57 @@ type EventPoint = {
   segmentId: string;
 };
 
-function paceColor(segment: TranscriptSegment) {
-  if (segment.kind === 'pause') return 'bg-slate-700/50';
+// Pace states for visualization
+type PaceState = 'fast' | 'normal' | 'slow' | 'pause';
+
+function getPaceState(segment: TranscriptSegment): PaceState {
+  if (segment.kind === 'pause') return 'pause';
   const has = (kind: string) => segment.tags.some((t) => t.kind === kind);
-  if (has('fast')) return 'bg-gradient-to-r from-amber-400 via-amber-300 to-amber-200';
-  if (has('slow')) return 'bg-gradient-to-r from-sky-400 via-sky-300 to-sky-200';
-  return 'bg-gradient-to-r from-emerald-500 via-emerald-400 to-emerald-300';
+  if (has('fast')) return 'fast';
+  if (has('slow')) return 'slow';
+  return 'normal';
 }
 
-function structureColor(segment: TranscriptSegment) {
-  if (segment.kind === 'pause') return 'bg-slate-700/30';
+// Structure states for visualization  
+type StructureState = 'strong' | 'neutral' | 'weak' | 'pause';
+
+function getStructureState(segment: TranscriptSegment): StructureState {
+  if (segment.kind === 'pause') return 'pause';
   const has = (kind: string) => segment.tags.some((t) => t.kind === kind);
-  if (has('structure') || has('good_emphasis'))
-    return 'bg-emerald-400/60';
-  if (has('hedging') || has('complex_sentence') || has('unclear_point'))
-    return 'bg-indigo-400/60';
-  return 'bg-white/10';
+  if (has('structure') || has('good_emphasis')) return 'strong';
+  if (has('hedging') || has('complex_sentence') || has('unclear_point')) return 'weak';
+  return 'neutral';
 }
 
 export function RhythmMap({ segments, issues = [], activeSegmentId, onSegmentClick }: RhythmMapProps) {
   const totalDuration = segments.length ? segments[segments.length - 1].endMs : 0;
   const [hoverPct, setHoverPct] = useState<number | null>(null);
-  const [hoverEvent, setHoverEvent] = useState<{ point: EventPoint; left: number } | null>(null);
+  const [hoverEvent, setHoverEvent] = useState<EventPoint | null>(null);
   const timelineRef = useRef<HTMLDivElement | null>(null);
 
   const events: EventPoint[] = useMemo(() => {
     if (!totalDuration) return [];
 
-    const relevantKinds: EventKind[] = ['filler', 'hedging', 'emphasis', 'unclear', 'complex'];
     const list: EventPoint[] = [];
     segments.forEach((segment) => {
       const mid = segment.startMs + (segment.endMs - segment.startMs) / 2;
+      
+      // Long pauses as events
       if (segment.kind === 'pause') {
         const pauseTag = segment.tags.find((t) => t.kind === 'long_pause');
-        list.push({
-          id: `${segment.id}-pause`,
-          timeMs: segment.startMs,
-          kind: 'pause',
-          severity: pauseTag?.severity ?? 'low',
-          label: pauseTag?.label ?? 'Pause',
-          segmentId: segment.id,
-        });
+        if (pauseTag) {
+          list.push({
+            id: `${segment.id}-pause`,
+            timeMs: segment.startMs,
+            kind: 'pause',
+            severity: pauseTag.severity,
+            label: pauseTag.label,
+            segmentId: segment.id,
+          });
+        }
       }
-      // Segment-level tags that should be visualized as point events
+
+      // Segment-level tags
       segment.tags.forEach((tag) => {
         if (tag.kind === 'filler') {
           list.push({
@@ -75,18 +82,17 @@ export function RhythmMap({ segments, issues = [], activeSegmentId, onSegmentCli
             segmentId: segment.id,
           });
         }
-        if (tag.kind === 'hedging' || tag.kind === 'unclear_point' || tag.kind === 'complex_sentence' || tag.kind === 'good_emphasis') {
-          const mapKind: Record<typeof tag.kind, EventKind> = {
+        if (['hedging', 'unclear_point', 'complex_sentence', 'good_emphasis'].includes(tag.kind)) {
+          const mapKind: Record<string, EventKind> = {
             hedging: 'hedging',
             unclear_point: 'unclear',
             complex_sentence: 'complex',
             good_emphasis: 'emphasis',
           };
-          const kind = mapKind[tag.kind];
           list.push({
             id: `${segment.id}-${tag.id}`,
             timeMs: mid,
-            kind,
+            kind: mapKind[tag.kind],
             severity: tag.severity,
             label: tag.label,
             segmentId: segment.id,
@@ -97,30 +103,12 @@ export function RhythmMap({ segments, issues = [], activeSegmentId, onSegmentCli
       // Token-level tags
       const tokens = segment.kind === 'speech' ? segment.tokens : [];
       tokens.forEach((token) => {
-        const tokenTime = token.startMs;
         token.tags.forEach((tag) => {
           if (tag.kind === 'filler') {
             list.push({
               id: `${token.id}-${tag.id}`,
-              timeMs: tokenTime,
+              timeMs: token.startMs,
               kind: 'filler',
-              severity: tag.severity,
-              label: tag.label,
-              segmentId: segment.id,
-            });
-          }
-          if (tag.kind === 'hedging' || tag.kind === 'unclear_point' || tag.kind === 'complex_sentence' || tag.kind === 'good_emphasis') {
-            const mapKind: Record<typeof tag.kind, EventKind> = {
-              hedging: 'hedging',
-              unclear_point: 'unclear',
-              complex_sentence: 'complex',
-              good_emphasis: 'emphasis',
-            };
-            const kind = mapKind[tag.kind];
-            list.push({
-              id: `${token.id}-${tag.id}`,
-              timeMs: tokenTime,
-              kind,
               severity: tag.severity,
               label: tag.label,
               segmentId: segment.id,
@@ -130,13 +118,7 @@ export function RhythmMap({ segments, issues = [], activeSegmentId, onSegmentCli
       });
     });
     return list;
-  }, [segments]);
-
-  const severityColor = {
-    high: 'bg-rose-400',
-    medium: 'bg-amber-300',
-    low: 'bg-emerald-300',
-  } as const;
+  }, [segments, totalDuration]);
 
   const handleMove = (e: React.MouseEvent<HTMLDivElement>) => {
     if (!timelineRef.current || !totalDuration) return;
@@ -145,277 +127,337 @@ export function RhythmMap({ segments, issues = [], activeSegmentId, onSegmentCli
     setHoverPct(pct);
   };
 
-  const hoverTimeLabel =
-    hoverPct !== null && totalDuration
-      ? `${((hoverPct * totalDuration) / 1000).toFixed(1)}s`
-      : undefined;
+  const hoverTimeMs = hoverPct !== null && totalDuration ? hoverPct * totalDuration : null;
+  const hoverTimeLabel = hoverTimeMs !== null ? formatTime(hoverTimeMs) : undefined;
+
+  // Find hovered segment
+  const hoveredSegment = hoverTimeMs !== null 
+    ? segments.find(s => s.startMs <= hoverTimeMs && s.endMs >= hoverTimeMs)
+    : null;
 
   return (
-    <div className="rounded-2xl border border-white/5 bg-slate-950/70 p-4">
-      <div className="flex flex-wrap items-center justify-between gap-2">
-        <div>
-          <p className="text-xs uppercase tracking-[0.14em] text-slate-400">Rhythm map</p>
-          <p className="text-sm text-slate-300">Pace, structure, pauses, fillers, and cues on one timeline</p>
+    <div className="rounded-xl border border-white/[0.06] bg-slate-900/50 p-4">
+      {/* Header */}
+      <div className="flex items-center justify-between mb-4">
+        <div className="flex items-center gap-3">
+          <h3 className="text-sm font-medium text-slate-200">Session Timeline</h3>
+          <span className="text-xs text-slate-500">{formatTime(totalDuration)} total</span>
         </div>
-        <div className="flex items-center gap-2 text-xs text-emerald-200">
-          <Sparkles className="h-4 w-4" />
-          <span>Hover for time · click to sync</span>
+        <div className="flex items-center gap-4 text-[10px] text-slate-500">
+          <span className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-amber-400" /> Fast
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-emerald-400" /> Good
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-sky-400" /> Slow
+          </span>
+          <span className="flex items-center gap-1.5">
+            <span className="w-2 h-2 rounded-full bg-rose-400" /> Issue
+          </span>
         </div>
       </div>
 
+      {/* Timeline tracks */}
       <div
         ref={timelineRef}
-        className="relative mt-4 space-y-3"
+        className="relative space-y-2"
         onMouseMove={handleMove}
         onMouseLeave={() => {
           setHoverPct(null);
           setHoverEvent(null);
         }}
       >
-        {hoverPct !== null ? (
+        {/* Hover line */}
+        {hoverPct !== null && (
           <div
-            style={{ left: `${hoverPct * 100}%` }}
-            className="pointer-events-none absolute inset-y-[-12px] w-px bg-emerald-300/70"
+            style={{ left: `calc(72px + ${hoverPct * 100}% * (100% - 72px) / 100%)` }}
+            className="pointer-events-none absolute top-0 bottom-0 z-20 w-px bg-white/40"
           >
-            {hoverTimeLabel ? (
-              <div className="absolute -left-6 -top-5 rounded-md bg-slate-800 px-2 py-0.5 text-[10px] text-emerald-100">
-                {hoverTimeLabel}
-              </div>
-            ) : null}
+            <div className="absolute left-1/2 -translate-x-1/2 -top-6 rounded bg-slate-800 border border-slate-700 px-2 py-0.5 text-[10px] text-white whitespace-nowrap">
+              {hoverTimeLabel}
+            </div>
           </div>
-        ) : null}
+        )}
 
-        <Track
-          label="Pace"
+        {/* Pace Track */}
+        <PaceTrack
           segments={segments}
-          colorFn={paceColor}
-          totalDuration={totalDuration}
-          activeSegmentId={activeSegmentId}
-          onSegmentClick={onSegmentClick}
-        />
-        <Track
-          label="Structure"
-          segments={segments}
-          colorFn={structureColor}
           totalDuration={totalDuration}
           activeSegmentId={activeSegmentId}
           onSegmentClick={onSegmentClick}
         />
 
-        <EventsRow
-          label="Pauses & events"
+        {/* Structure Track */}
+        <StructureTrack
+          segments={segments}
+          totalDuration={totalDuration}
+          activeSegmentId={activeSegmentId}
+          onSegmentClick={onSegmentClick}
+        />
+
+        {/* Events Track */}
+        <EventsTrack
           events={events}
           totalDuration={totalDuration}
-          severityColor={severityColor}
           onSegmentClick={onSegmentClick}
-          onHover={(event) =>
-            setHoverEvent(event ? { point: event, left: totalDuration ? (event.timeMs / totalDuration) * 100 : 0 } : null)
-          }
+          onHover={setHoverEvent}
+          hoveredEvent={hoverEvent}
         />
       </div>
 
-      {/* Coaching cues timeline removed to reduce confusion; cues stay in the side panel. */}
-      <Axis totalDuration={totalDuration} />
-      <Legend />
+      {/* Time axis */}
+      <TimeAxis totalDuration={totalDuration} />
 
-      {hoverEvent ? (
-        <div
-          className="pointer-events-none absolute z-30 rounded-md bg-slate-800 px-3 py-2 text-xs text-slate-100 shadow-lg"
-          style={{ left: `${hoverEvent.left}%`, top: '100%', transform: 'translate(-50%, 8px)' }}
-        >
-          <div className="flex items-center gap-2">
-            <span className={clsx('h-2.5 w-2.5 rounded-full', hoverEvent.point.kind === 'filler' ? severityColor[hoverEvent.point.severity] : 'bg-white/70')} />
-            <span className="font-semibold capitalize">{hoverEvent.point.kind}</span>
-          </div>
-          <p className="mt-1 text-slate-200">{hoverEvent.point.label}</p>
+      {/* Hover tooltip for events */}
+      {hoverEvent && (
+        <div className="mt-3 flex items-center gap-2 text-xs">
+          <span className={clsx(
+            'w-2 h-2 rounded-full',
+            hoverEvent.kind === 'filler' && 'bg-rose-400',
+            hoverEvent.kind === 'pause' && 'bg-slate-400',
+            hoverEvent.kind === 'emphasis' && 'bg-emerald-400',
+            hoverEvent.kind === 'hedging' && 'bg-amber-400',
+            ['unclear', 'complex'].includes(hoverEvent.kind) && 'bg-amber-400',
+          )} />
+          <span className="text-slate-300 font-medium capitalize">{hoverEvent.kind}</span>
+          <span className="text-slate-500">at {formatTime(hoverEvent.timeMs)}</span>
+          <span className="text-slate-400">— {hoverEvent.label}</span>
         </div>
-      ) : null}
+      )}
     </div>
   );
 }
 
-function Track({
-  label,
+function formatTime(ms: number): string {
+  const totalSec = Math.floor(ms / 1000);
+  const min = Math.floor(totalSec / 60);
+  const sec = totalSec % 60;
+  return min > 0 ? `${min}:${sec.toString().padStart(2, '0')}` : `${sec}s`;
+}
+
+// Pace visualization track
+function PaceTrack({
   segments,
-  colorFn,
   totalDuration,
   activeSegmentId,
   onSegmentClick,
 }: {
-  label: string;
   segments: TranscriptSegment[];
-  colorFn: (segment: TranscriptSegment) => string;
   totalDuration: number;
   activeSegmentId?: string;
   onSegmentClick?: (segmentId: string) => void;
 }) {
   return (
     <div className="flex items-center gap-3">
-      <div className="w-16 text-xs uppercase tracking-[0.14em] text-slate-400">{label}</div>
-      <div className="relative flex h-7 flex-1 items-center overflow-hidden rounded-xl border border-white/5 bg-slate-900/60">
+      <span className="w-[60px] text-[11px] font-medium text-slate-400 text-right">Pace</span>
+      <div className="relative flex-1 h-6 rounded-md overflow-hidden bg-slate-800/60">
         {segments.map((segment) => {
           const left = totalDuration ? (segment.startMs / totalDuration) * 100 : 0;
           const width = totalDuration ? ((segment.endMs - segment.startMs) / totalDuration) * 100 : 0;
+          const paceState = getPaceState(segment);
           const isActive = activeSegmentId === segment.id;
+
           return (
             <button
               key={segment.id}
               style={{ left: `${left}%`, width: `${width}%` }}
               className={clsx(
-                'absolute inset-y-0 transition-all hover:brightness-110',
-                colorFn(segment),
-                isActive && 'ring-2 ring-emerald-300 shadow-soft',
+                'absolute inset-y-0 transition-all duration-150',
+                paceState === 'fast' && 'bg-amber-500/80',
+                paceState === 'normal' && 'bg-emerald-500/60',
+                paceState === 'slow' && 'bg-sky-500/70',
+                paceState === 'pause' && 'bg-slate-700/50',
+                isActive && 'ring-1 ring-white/60 z-10',
+                'hover:brightness-125',
               )}
               onClick={() => onSegmentClick?.(segment.id)}
-              aria-label={`${label} segment ${segment.id}`}
-            >
-              {segment.kind === 'pause' ? <span className="absolute inset-0 bg-slate-900/50" /> : null}
-            </button>
-          );
-        })}
-      </div>
-    </div>
-  );
-}
-
-function EventsRow({
-  label,
-  events,
-  totalDuration,
-  severityColor,
-  onSegmentClick,
-  onHover,
-}: {
-  label: string;
-  events: EventPoint[];
-  totalDuration: number;
-  severityColor: Record<'low' | 'medium' | 'high', string>;
-  onSegmentClick?: (segmentId: string) => void;
-  onHover?: (event: EventPoint | null) => void;
-}) {
-  const kindColor: Record<EventKind, string> = {
-    pause: 'bg-slate-400/80',
-    filler: severityColor.medium,
-    hedging: 'bg-indigo-300',
-    emphasis: 'bg-emerald-300',
-    unclear: 'bg-amber-300',
-    complex: 'bg-amber-200',
-  };
-
-  return (
-    <div className="flex items-center gap-3">
-      <div className="w-16 text-xs uppercase tracking-[0.14em] text-slate-400">{label}</div>
-      <div className="relative flex h-10 flex-1 items-center rounded-xl border border-white/5 bg-slate-900/60">
-        {events.map((event) => {
-          const left = totalDuration ? (event.timeMs / totalDuration) * 100 : 0;
-          return (
-            <button
-              key={event.id}
-              style={{ left: `${left}%` }}
-              className={clsx(
-                'absolute -translate-x-1/2 rounded-full border border-white/30 transition hover:scale-110',
-                event.kind === 'pause' ? 'h-4 w-4' : 'h-3.5 w-3.5',
-                event.kind === 'filler' ? severityColor[event.severity] : kindColor[event.kind],
-              )}
-              onClick={() => onSegmentClick?.(event.segmentId)}
-              onMouseEnter={() => onHover?.(event)}
-              onMouseLeave={() => onHover?.(null)}
-              aria-label={`${event.kind} at ${(event.timeMs / 1000).toFixed(1)}s`}
             />
           );
         })}
-        {!events.length ? (
-          <div className="absolute inset-0 grid place-items-center text-xs text-slate-500">No events flagged</div>
-        ) : null}
+        {/* Subtle segment dividers */}
+        {segments.slice(0, -1).map((segment) => {
+          const left = totalDuration ? (segment.endMs / totalDuration) * 100 : 0;
+          return (
+            <div
+              key={`div-${segment.id}`}
+              style={{ left: `${left}%` }}
+              className="absolute inset-y-0 w-px bg-slate-900/60"
+            />
+          );
+        })}
       </div>
     </div>
   );
 }
 
-function IssueMarkers({
+// Structure visualization track
+function StructureTrack({
   segments,
-  issues,
   totalDuration,
+  activeSegmentId,
+  onSegmentClick,
 }: {
   segments: TranscriptSegment[];
-  issues: SessionIssue[];
   totalDuration: number;
+  activeSegmentId?: string;
+  onSegmentClick?: (segmentId: string) => void;
 }) {
-  if (!issues.length || !totalDuration) return null;
-
-  const severityColor = {
-    high: 'bg-rose-400',
-    medium: 'bg-amber-300',
-    low: 'bg-emerald-300',
-  } as const;
-
-  const markers = issues.map((issue) => {
-    const firstSeg = segments.find((seg) => seg.id === issue.segmentIds[0]);
-    const start = firstSeg ? (firstSeg.startMs / totalDuration) * 100 : 0;
-    return { id: issue.id, start, severity: issue.severity, label: issue.kind };
-  });
-
   return (
-    <div className="relative mt-3 h-8 overflow-hidden rounded-xl border border-white/5 bg-slate-900/80 px-2">
-      <div className="flex items-center gap-2 text-xs text-slate-300">
-        <Flag className="h-4 w-4 text-emerald-200" />
-        Coaching cues on timeline
+    <div className="flex items-center gap-3">
+      <span className="w-[60px] text-[11px] font-medium text-slate-400 text-right">Clarity</span>
+      <div className="relative flex-1 h-4 rounded-md overflow-hidden bg-slate-800/40">
+        {segments.map((segment) => {
+          const left = totalDuration ? (segment.startMs / totalDuration) * 100 : 0;
+          const width = totalDuration ? ((segment.endMs - segment.startMs) / totalDuration) * 100 : 0;
+          const structureState = getStructureState(segment);
+          const isActive = activeSegmentId === segment.id;
+
+          return (
+            <button
+              key={segment.id}
+              style={{ left: `${left}%`, width: `${width}%` }}
+              className={clsx(
+                'absolute inset-y-0 transition-all duration-150',
+                structureState === 'strong' && 'bg-emerald-400/50',
+                structureState === 'neutral' && 'bg-slate-600/40',
+                structureState === 'weak' && 'bg-rose-400/40',
+                structureState === 'pause' && 'bg-slate-800/30',
+                isActive && 'ring-1 ring-white/50 z-10',
+                'hover:brightness-125',
+              )}
+              onClick={() => onSegmentClick?.(segment.id)}
+            />
+          );
+        })}
       </div>
-      {markers.map((marker) => (
-        <div
-          key={marker.id}
-          style={{ left: `${marker.start}%` }}
-          className={clsx(
-            'absolute bottom-1 h-3 w-3 -translate-x-1/2 rotate-45 rounded-sm',
-            severityColor[marker.severity],
-          )}
-          title={marker.label}
-        />
-      ))}
     </div>
   );
 }
 
-function Axis({ totalDuration }: { totalDuration: number }) {
-  if (!totalDuration) return null;
-  const ticks = 5;
-  const values = Array.from({ length: ticks + 1 }, (_, i) => (totalDuration / 1000) * (i / ticks));
+// Events/markers track
+function EventsTrack({
+  events,
+  totalDuration,
+  onSegmentClick,
+  onHover,
+  hoveredEvent,
+}: {
+  events: EventPoint[];
+  totalDuration: number;
+  onSegmentClick?: (segmentId: string) => void;
+  onHover?: (event: EventPoint | null) => void;
+  hoveredEvent: EventPoint | null;
+}) {
+  const eventKindConfig: Record<EventKind, { color: string; icon: string }> = {
+    filler: { color: 'bg-rose-400', icon: '•' },
+    pause: { color: 'bg-slate-400', icon: '॥' },
+    hedging: { color: 'bg-amber-400', icon: '~' },
+    emphasis: { color: 'bg-emerald-400', icon: '★' },
+    unclear: { color: 'bg-amber-400', icon: '?' },
+    complex: { color: 'bg-amber-400', icon: '⚡' },
+  };
+
+  // Group overlapping events (within 2% of timeline)
+  const groupedEvents = useMemo(() => {
+    if (!totalDuration) return [];
+    const sorted = [...events].sort((a, b) => a.timeMs - b.timeMs);
+    const groups: EventPoint[][] = [];
+    
+    sorted.forEach(event => {
+      const lastGroup = groups[groups.length - 1];
+      if (lastGroup) {
+        const lastEvent = lastGroup[lastGroup.length - 1];
+        const gap = ((event.timeMs - lastEvent.timeMs) / totalDuration) * 100;
+        if (gap < 2) {
+          lastGroup.push(event);
+          return;
+        }
+      }
+      groups.push([event]);
+    });
+    
+    return groups;
+  }, [events, totalDuration]);
+
   return (
-    <div className="mt-3 flex items-center gap-3 text-xs text-slate-400">
-      <div className="w-16" />
-      <div className="relative flex flex-1 items-center">
-        <div className="absolute inset-0 border-t border-dashed border-white/10" />
-        {values.map((seconds, i) => (
-          <div key={i} style={{ left: `${(i / ticks) * 100}%` }} className="absolute -translate-x-1/2">
-            <div className="h-2 w-px bg-white/30" />
-            <div className="mt-1 text-[10px] text-slate-400">{seconds.toFixed(0)}s</div>
+    <div className="flex items-center gap-3">
+      <span className="w-[60px] text-[11px] font-medium text-slate-400 text-right">Events</span>
+      <div className="relative flex-1 h-6 rounded-md bg-slate-800/30 border border-slate-700/30">
+        {groupedEvents.map((group, groupIdx) => {
+          const firstEvent = group[0];
+          const left = totalDuration ? (firstEvent.timeMs / totalDuration) * 100 : 0;
+          const isHovered = group.some(e => e.id === hoveredEvent?.id);
+          const hasMultiple = group.length > 1;
+          
+          // Determine dominant type for styling
+          const hasFiller = group.some(e => e.kind === 'filler');
+          const hasHighSeverity = group.some(e => e.severity === 'high');
+          
+          return (
+            <button
+              key={`group-${groupIdx}`}
+              style={{ left: `${left}%` }}
+              className={clsx(
+                'absolute top-1/2 -translate-y-1/2 -translate-x-1/2 transition-all duration-150',
+                'flex items-center justify-center',
+                hasMultiple ? 'w-5 h-5 rounded-md' : 'w-3 h-3 rounded-full',
+                hasFiller ? 'bg-rose-400' : 
+                hasHighSeverity ? 'bg-amber-400' :
+                eventKindConfig[firstEvent.kind].color,
+                isHovered && 'ring-2 ring-white/60 scale-125 z-10',
+                'hover:scale-110',
+              )}
+              onClick={() => onSegmentClick?.(firstEvent.segmentId)}
+              onMouseEnter={() => onHover?.(firstEvent)}
+              onMouseLeave={() => onHover?.(null)}
+            >
+              {hasMultiple && (
+                <span className="text-[9px] font-bold text-slate-900">{group.length}</span>
+              )}
+            </button>
+          );
+        })}
+        
+        {events.length === 0 && (
+          <div className="absolute inset-0 flex items-center justify-center text-[10px] text-slate-600">
+            No events detected
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// Time axis
+function TimeAxis({ totalDuration }: { totalDuration: number }) {
+  if (!totalDuration) return null;
+  
+  const tickCount = 6;
+  const ticks = Array.from({ length: tickCount }, (_, i) => ({
+    pct: i / (tickCount - 1),
+    time: (totalDuration * i) / (tickCount - 1),
+  }));
+
+  return (
+    <div className="flex items-center gap-3 mt-2">
+      <span className="w-[60px]" />
+      <div className="relative flex-1 h-4">
+        {/* Tick marks */}
+        {ticks.map((tick, i) => (
+          <div
+            key={i}
+            style={{ left: `${tick.pct * 100}%` }}
+            className="absolute top-0 -translate-x-1/2"
+          >
+            <div className="w-px h-1.5 bg-slate-700" />
+            <span className="absolute top-2 left-1/2 -translate-x-1/2 text-[9px] text-slate-600 whitespace-nowrap">
+              {formatTime(tick.time)}
+            </span>
           </div>
         ))}
       </div>
-    </div>
-  );
-}
-
-function Legend() {
-  const entries = [
-    { color: 'bg-amber-400', label: 'Fast (pace band)' },
-    { color: 'bg-sky-400', label: 'Slow (pace band)' },
-    { color: 'bg-emerald-300', label: 'Structure / emphasis (band)' },
-    { color: 'bg-indigo-300', label: 'Hedging / unclear (band)' },
-    { color: 'bg-slate-500', label: 'Pause (event)' },
-    { color: 'bg-rose-400', label: 'Filler (event)' },
-    { color: 'bg-indigo-300', label: 'Hedging (event)' },
-    { color: 'bg-emerald-300', label: 'Emphasis (event)' },
-    { color: 'bg-amber-300', label: 'Unclear / complex (event)' },
-  ];
-  return (
-    <div className="mt-4 flex flex-wrap gap-3 text-xs text-slate-300">
-      {entries.map((entry) => (
-        <span key={entry.label} className="inline-flex items-center gap-2 rounded-full bg-white/5 px-2.5 py-1">
-          <span className={`h-3 w-3 rounded-full ${entry.color}`} />
-          {entry.label}
-        </span>
-      ))}
     </div>
   );
 }

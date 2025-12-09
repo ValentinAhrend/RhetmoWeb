@@ -59,11 +59,11 @@ export const MOCK_SESSIONS: Session[] = [
           endMs: 14000,
           kind: 'speech',
           text:
-            'Hi everyone, I am Tobias, co-founder of PulseSpeak. Today I will show you how we blend audio, physiology, and motion to make public speaking coaching feel effortless. You will see where I speed, where I hedge, and where the watch can catch it live.',
+            'Hi everyone, I am Tobias, co-founder of Rhemto. Today I will show you how we blend audio, physiology, and motion to make public speaking coaching feel effortless. You will see where I speed, where I hedge, and where the watch can catch it live.',
           tokens: createTimedTokens({
             segmentId: 's1-seg-1',
             text:
-              'Hi everyone, I am Tobias, co-founder of PulseSpeak. Today I will show you how we blend audio, physiology, and motion to make public speaking coaching feel effortless. You will see where I speed, where I hedge, and where the watch can catch it live.',
+              'Hi everyone, I am Tobias, co-founder of Rhemto. Today I will show you how we blend audio, physiology, and motion to make public speaking coaching feel effortless. You will see where I speed, where I hedge, and where the watch can catch it live.',
             startMs: 0,
             endMs: 14000,
             tokenPrefix: 's1-tok-1-',

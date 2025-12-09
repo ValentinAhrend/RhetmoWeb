@@ -19,7 +19,8 @@
       "@/data/*": ["src/data/*"],
       "@/mock/*": ["src/mock/*"],
       "@/styles/*": ["src/styles/*"],
-      "@/types/*": ["src/types/*"]
+      "@/types/*": ["src/types/*"],
+      "@/utils/*": ["src/utils/*"]
     }
   },
   "include": ["src"],
