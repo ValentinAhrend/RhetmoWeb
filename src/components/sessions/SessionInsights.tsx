@@ -1,6 +1,6 @@
 import clsx from 'clsx';
 import type { ReactNode } from 'react';
-import { Activity, Brain, HeartPulse, Sparkles, Waves } from 'lucide-react';
+import { Activity, Sparkles, Waves } from 'lucide-react';
 import type { SessionIssue, SessionMetricsSummary } from '@/types/sessions';
 
 interface SessionInsightsProps {
@@ -42,15 +42,6 @@ function deriveInsights(metrics: SessionMetricsSummary): Insight[] {
       ? 'Moderate fillers — try a beat of silence instead.'
       : 'Low fillers — keep this clarity.';
 
-  const calmScore = metrics.stressSpeedIndex ?? 0.5;
-  const calmTone: Tone = calmScore > 0.7 ? 'risk' : calmScore > 0.55 ? 'caution' : 'positive';
-  const calmDetail =
-    calmScore > 0.7
-      ? 'Stress creeping in — watch breathing when pace rises.'
-      : calmScore > 0.55
-      ? 'Slight tension — short pauses will help reset.'
-      : 'Calm delivery — continue pairing pace and breath.';
-
   return [
     {
       title: 'Pace window',
@@ -66,13 +57,6 @@ function deriveInsights(metrics: SessionMetricsSummary): Insight[] {
       icon: <Waves className="h-5 w-5" />,
       tone: fillerTone,
     },
-    {
-      title: 'Calm & control',
-      value: metrics.stressSpeedIndex !== undefined ? `${Math.round(metrics.stressSpeedIndex * 100)}%` : '—',
-      detail: calmDetail,
-      icon: <HeartPulse className="h-5 w-5" />,
-      tone: calmTone,
-    },
   ];
 }
 
@@ -85,10 +69,9 @@ function topIssues(issues: SessionIssue[], limit = 3) {
 
 export function SessionInsights({ metrics, issues }: SessionInsightsProps) {
   const insights = deriveInsights(metrics);
-  const focus = topIssues(issues);
 
   return (
-    <div className="grid gap-4 lg:grid-cols-3">
+    <div className="grid gap-4 lg:grid-cols-2">
       {insights.map((insight) => (
         <div
           key={insight.title}
@@ -109,38 +92,6 @@ export function SessionInsights({ metrics, issues }: SessionInsightsProps) {
           </div>
         </div>
       ))}
-
-      <div className="lg:col-span-3 rounded-2xl border border-white/5 bg-white/5 p-4">
-        <div className="flex items-center justify-between">
-          <div className="flex items-center gap-2 text-sm font-semibold text-slate-100">
-            <Brain className="h-4 w-4 text-emerald-200" />
-            Focus cues
-          </div>
-          <div className="text-xs uppercase tracking-[0.12em] text-slate-400">Auto-prioritized</div>
-        </div>
-        {focus.length ? (
-          <ul className="mt-3 space-y-2 text-sm text-slate-100">
-            {focus.map((issue) => (
-              <li
-                key={issue.id}
-                className={clsx(
-                  'rounded-xl border px-3 py-2',
-                  issue.severity === 'high' && 'border-rose-300/40 bg-rose-500/10 text-rose-50',
-                  issue.severity === 'medium' && 'border-amber-300/40 bg-amber-500/10 text-amber-50',
-                  issue.severity === 'low' && 'border-emerald-300/40 bg-emerald-500/10 text-emerald-50',
-                )}
-              >
-                <div className="text-xs uppercase tracking-[0.14em] opacity-80">
-                  {issue.severity} • {issue.kind.replace('_', ' ')}
-                </div>
-                <p className="leading-relaxed text-white">{issue.message}</p>
-              </li>
-            ))}
-          </ul>
-        ) : (
-          <p className="mt-3 text-sm text-slate-300">No coaching cues for this session.</p>
-        )}
-      </div>
     </div>
   );
 }

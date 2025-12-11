@@ -74,11 +74,17 @@ interface ApiLiveSessionResponse {
   analysis: ApiAnalysis;
 }
 
-// Analyzed session response (quick-handler) - just the analysis part
 interface ApiAnalyzedSessionResponse {
   segments: ApiSegment[];
   metrics?: ApiMetrics;
   issues?: ApiIssue[];
+}
+
+// Conversation list response (dynamic-handler)
+interface ApiConversationEntry {
+  conversation_id: string;
+  timestamp: number;
+  status: 'recording' | 'processing' | 'finished';
 }
 
 /**
@@ -272,3 +278,30 @@ export async function checkRecordingStatus(): Promise<{
     hasNewAnalysis: false,
   };
 }
+
+/**
+ * Fetch list of all conversations from dynamic-handler
+ */
+export async function fetchAllConversations(): Promise<ApiConversationEntry[]> {
+  try {
+    const response = await fetch(`${API_CONFIG.baseUrl}/dynamic-handler`, {
+      method: 'POST',
+      headers: API_HEADERS,
+      body: JSON.stringify({ name: 'Functions' }),
+    });
+
+    if (!response.ok) {
+      console.error('Failed to fetch conversations:', response.status, response.statusText);
+      return [];
+    }
+
+    const data: ApiConversationEntry[] = await response.json();
+    return data;
+  } catch (error) {
+    console.error('Error fetching conversations:', error);
+    return [];
+  }
+}
+
+// Export types for use in data layer
+export type { ApiConversationEntry };

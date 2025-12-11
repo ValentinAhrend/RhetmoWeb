@@ -1,5 +1,6 @@
 import { MOCK_SESSIONS, getMockSessionById } from '@/mock/mockSession';
-import { fetchLiveSession, fetchAnalyzedSession } from '@/api/index';
+import { fetchLiveSession, fetchAnalyzedSession, fetchAllConversations } from '@/api/index';
+import type { ApiConversationEntry } from '@/api/index';
 import type { Session } from '@/types/sessions';
 import { withDerivedMetrics } from '@/utils/metrics';
 
@@ -12,31 +13,58 @@ export const LIVE_SESSION_ID = 'live-session';
 const delay = (ms = 160) => new Promise((resolve) => setTimeout(resolve, ms));
 
 /**
- * List all sessions - combines mock sessions with live backend session if available
+ * Convert API status to internal analysisStatus
+ */
+function mapStatus(status: ApiConversationEntry['status']): Session['analysisStatus'] {
+  switch (status) {
+    case 'recording': return 'processing';
+    case 'processing': return 'processing';
+    case 'finished': return 'ready';
+    default: return 'pending';
+  }
+}
+
+/**
+ * Create a session shell from conversation entry (for list view)
+ */
+function conversationToSession(conv: ApiConversationEntry): Session {
+  const date = new Date(conv.timestamp * 1000);
+  return {
+    id: conv.conversation_id,
+    userId: 'user-1',
+    title: `Session ${date.toLocaleDateString()}`,
+    mode: 'practice',
+    context: 'other',
+    createdAt: date.toISOString(),
+    startedAt: date.toISOString(),
+    durationSec: 0,
+    analysisStatus: mapStatus(conv.status),
+  };
+}
+
+/**
+ * List all sessions - fetches from backend dynamic-handler
  */
 export async function listSessions(): Promise<Session[]> {
   const sessions: Session[] = [];
 
-  // Try to fetch live session from backend
+  // Fetch all conversations from backend
   if (USE_BACKEND) {
     try {
-      const liveSession = await fetchLiveSession();
-      if (liveSession) {
-        // Add the live session with a special marker
-        sessions.push({
-          ...withDerivedMetrics(liveSession),
-          id: liveSession.id, // Keep original ID from backend
-        });
-      }
+      const conversations = await fetchAllConversations();
+      const backendSessions = conversations.map(conversationToSession);
+      sessions.push(...backendSessions.map(withDerivedMetrics));
     } catch (error) {
-      console.error('Failed to fetch live session:', error);
+      console.error('Failed to fetch conversations:', error);
     }
   }
 
-  // Add mock sessions for development/testing
-  await delay();
-  const mockSessions = MOCK_SESSIONS.map(withDerivedMetrics);
-  sessions.push(...mockSessions);
+  // Add mock sessions for development/testing (only if no backend sessions)
+  if (sessions.length === 0) {
+    await delay();
+    const mockSessions = MOCK_SESSIONS.map(withDerivedMetrics);
+    sessions.push(...mockSessions);
+  }
 
   // Sort by creation date (newest first)
   return sessions.sort((a, b) => 
@@ -48,24 +76,32 @@ export async function listSessions(): Promise<Session[]> {
  * Fetch a single session by ID
  */
 export async function fetchSessionById(id: string): Promise<Session | undefined> {
-  // Check if this is a live session request
-  if (USE_BACKEND && id === LIVE_SESSION_ID) {
-    try {
-      const liveSession = await fetchLiveSession();
-      if (liveSession) {
-        return withDerivedMetrics(liveSession);
-      }
-    } catch (error) {
-      console.error('Failed to fetch live session:', error);
-    }
-  }
-
-  // Try to fetch from backend by matching ID
+  // First check if it's a backend session
   if (USE_BACKEND) {
     try {
-      const liveSession = await fetchLiveSession();
-      if (liveSession && liveSession.id === id) {
-        return withDerivedMetrics(liveSession);
+      // Check if the ID exists in our conversation list
+      const conversations = await fetchAllConversations();
+      const conv = conversations.find(c => c.conversation_id === id);
+      
+      if (conv) {
+        // Found in backend - get full details
+        // Use quick-handler for analysis data (currently returns latest, may need backend update)
+        const analysis = await fetchAnalyzedSession();
+        
+        const date = new Date(conv.timestamp * 1000);
+        const session: Session = {
+          id: conv.conversation_id,
+          userId: 'user-1',
+          title: `Session ${date.toLocaleDateString()}`,
+          mode: 'practice',
+          context: 'other',
+          createdAt: date.toISOString(),
+          startedAt: date.toISOString(),
+          durationSec: analysis?.metrics?.durationSec ?? 0,
+          analysisStatus: mapStatus(conv.status),
+          analysis: conv.status === 'finished' ? analysis ?? undefined : undefined,
+        };
+        return withDerivedMetrics(session);
       }
     } catch (error) {
       console.error('Failed to fetch session from backend:', error);

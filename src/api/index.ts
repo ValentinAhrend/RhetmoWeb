@@ -3,5 +3,7 @@ export { API_CONFIG, API_HEADERS } from './config';
 export { 
   fetchLiveSession, 
   fetchAnalyzedSession, 
-  checkRecordingStatus 
+  checkRecordingStatus,
+  fetchAllConversations,
 } from './client';
+export type { ApiConversationEntry } from './client';

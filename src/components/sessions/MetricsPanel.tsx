@@ -1,4 +1,5 @@
-import { Activity, Clock, HeartPulse, Thermometer, Type } from 'lucide-react';
+import { Activity, Clock, HeartPulse, Move, Type } from 'lucide-react';
+import clsx from 'clsx';
 import type { SessionMetricsSummary } from '@/types/sessions';
 
 function formatDuration(seconds: number) {
@@ -7,7 +8,20 @@ function formatDuration(seconds: number) {
   return `${mins}m ${secs}s`;
 }
 
+// Movement optimal range boundaries (0-1 scale)
+const MOVEMENT_MIN_OPTIMAL = 0.3;
+const MOVEMENT_MAX_OPTIMAL = 0.7;
+
+function getMovementTone(score: number): 'low' | 'optimal' | 'high' {
+  if (score < MOVEMENT_MIN_OPTIMAL) return 'low';
+  if (score > MOVEMENT_MAX_OPTIMAL) return 'high';
+  return 'optimal';
+}
+
 export function MetricsPanel({ metrics }: { metrics: SessionMetricsSummary }) {
+  const movementScore = metrics.movementScore ?? 0.5;
+  const movementTone = getMovementTone(movementScore);
+
   return (
     <div className="rounded-2xl border border-white/5 bg-white/5 p-4">
       <div className="mb-3 flex items-center justify-between">
@@ -36,16 +50,59 @@ export function MetricsPanel({ metrics }: { metrics: SessionMetricsSummary }) {
             {metrics.peakHeartRate} bpm
           </Metric>
         ) : null}
-        {metrics.movementScore !== undefined ? (
-          <Metric label="Movement" icon={<Thermometer className="h-4 w-4 text-sky-300" />}>
-            {(metrics.movementScore * 100).toFixed(0)}%
-          </Metric>
-        ) : null}
-        {metrics.stressSpeedIndex !== undefined ? (
-          <Metric label="Stress-speed" icon={<Thermometer className="h-4 w-4 text-amber-300" />}>
-            {(metrics.stressSpeedIndex * 100).toFixed(0)}%
-          </Metric>
-        ) : null}
+        
+        {/* Movement Score - spans 2 columns */}
+        {metrics.movementScore !== undefined && (
+          <div className="col-span-2 rounded-xl border border-white/5 bg-white/5 px-4 py-3">
+            <div className="flex items-center justify-between mb-2">
+              <p className="flex items-center gap-2 text-[11px] uppercase tracking-[0.12em] text-slate-400">
+                <Move className="h-4 w-4 text-sky-300" />
+                Body Movement
+              </p>
+              <span className={clsx(
+                'text-xs px-2 py-0.5 rounded-full',
+                movementTone === 'optimal' && 'bg-emerald-500/20 text-emerald-300',
+                movementTone === 'low' && 'bg-amber-500/20 text-amber-300',
+                movementTone === 'high' && 'bg-amber-500/20 text-amber-300',
+              )}>
+                {movementTone === 'optimal' ? 'Optimal' : movementTone === 'low' ? 'Too Little' : 'Too Much'}
+              </span>
+            </div>
+            
+            {/* Movement Slider Visualization */}
+            <div className="relative h-6 flex items-center">
+              {/* Track background */}
+              <div className="absolute inset-x-0 h-1 rounded-full bg-slate-700/50" />
+              
+              {/* Optimal zone highlight */}
+              <div 
+                className="absolute h-1 rounded-full bg-emerald-500/25"
+                style={{ 
+                  left: `${MOVEMENT_MIN_OPTIMAL * 100}%`, 
+                  width: `${(MOVEMENT_MAX_OPTIMAL - MOVEMENT_MIN_OPTIMAL) * 100}%` 
+                }}
+              />
+              
+              {/* Left boundary marker */}
+              <div 
+                className="absolute w-1.5 h-1.5 rounded-full bg-slate-500/80"
+                style={{ left: `${MOVEMENT_MIN_OPTIMAL * 100}%`, transform: 'translateX(-50%)' }}
+              />
+              
+              {/* Right boundary marker */}
+              <div 
+                className="absolute w-1.5 h-1.5 rounded-full bg-slate-500/80"
+                style={{ left: `${MOVEMENT_MAX_OPTIMAL * 100}%`, transform: 'translateX(-50%)' }}
+              />
+              
+              {/* Current score indicator */}
+              <div 
+                className="absolute w-3 h-3 rounded-full bg-emerald-400 shadow-sm shadow-emerald-500/40"
+                style={{ left: `${movementScore * 100}%`, transform: 'translateX(-50%)' }}
+              />
+            </div>
+          </div>
+        )}
       </div>
     </div>
   );
