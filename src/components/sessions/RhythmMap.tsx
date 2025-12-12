@@ -21,24 +21,74 @@ type EventPoint = {
 };
 
 // Pace states for visualization
-type PaceState = 'fast' | 'normal' | 'slow' | 'pause';
+type PaceState = 'very_fast' | 'fast' | 'normal' | 'slow' | 'pause';
 
 function getPaceState(segment: TranscriptSegment): PaceState {
   if (segment.kind === 'pause') return 'pause';
+  
+  // Check for pace tags from backend
   const has = (kind: string) => segment.tags.some((t) => t.kind === kind);
-  if (has('fast')) return 'fast';
-  if (has('slow')) return 'slow';
+  
+  // Calculate WPM from segment if we can
+  const durationSec = (segment.endMs - segment.startMs) / 1000;
+  const wordCount = segment.tokens?.length || segment.text.split(/\s+/).length;
+  const wpm = durationSec > 0 ? (wordCount / durationSec) * 60 : 0;
+  
+  // Four-tier pace system:
+  // Too slow: < 110 WPM (blue)
+  // Good: 110-160 WPM (green)
+  // Slightly fast: 160-200 WPM (amber)
+  // Way too fast: > 200 WPM (red)
+  
+  if (wpm > 200) return 'very_fast';
+  if (has('fast') || wpm > 160) return 'fast';
+  if (has('slow') || wpm < 110) return 'slow';
   return 'normal';
 }
 
-// Structure states for visualization  
-type StructureState = 'strong' | 'neutral' | 'weak' | 'pause';
+// Structure/Clarity states for visualization  
+type StructureState = 'strong' | 'neutral' | 'weak' | 'very_weak' | 'pause';
 
 function getStructureState(segment: TranscriptSegment): StructureState {
   if (segment.kind === 'pause') return 'pause';
+  
   const has = (kind: string) => segment.tags.some((t) => t.kind === kind);
-  if (has('structure') || has('good_emphasis')) return 'strong';
-  if (has('hedging') || has('complex_sentence') || has('unclear_point')) return 'weak';
+  const count = (kind: string) => segment.tags.filter((t) => t.kind === kind).length;
+  
+  // Count token-level issues (fillers)
+  const fillerCount = segment.tokens?.reduce(
+    (sum, t) => sum + t.tags.filter((tag) => tag.kind === 'filler').length,
+    0
+  ) || 0;
+  
+  // Calculate filler density (fillers per word)
+  const wordCount = segment.tokens?.length || segment.text.split(/\s+/).length;
+  const fillerDensity = wordCount > 0 ? fillerCount / wordCount : 0;
+  
+  // Count clarity issues
+  const hasHedging = has('hedging');
+  const hasComplex = has('complex_sentence');
+  const hasUnclear = has('unclear_point');
+  const hasGrammar = has('grammar');
+  const hasGoodElements = has('structure') || has('good_emphasis');
+  
+  // Very weak: High filler density (>15%) OR multiple major issues
+  const majorIssueCount = [hasHedging, hasComplex, hasUnclear, hasGrammar].filter(Boolean).length;
+  if (fillerDensity > 0.15 || (fillerCount >= 3 && majorIssueCount >= 1) || majorIssueCount >= 2) {
+    return 'very_weak';
+  }
+  
+  // Weak: Some fillers (>8% density) OR any major clarity issue
+  if (fillerDensity > 0.08 || fillerCount >= 2 || hasHedging || hasComplex || hasUnclear) {
+    return 'weak';
+  }
+  
+  // Strong: Has good elements AND low filler count
+  if (hasGoodElements && fillerCount === 0) {
+    return 'strong';
+  }
+  
+  // Neutral: Default
   return 'neutral';
 }
 
@@ -269,6 +319,7 @@ function PaceTrack({
               style={{ left: `${left}%`, width: `${width}%` }}
               className={clsx(
                 'absolute inset-y-0 transition-all duration-150',
+                paceState === 'very_fast' && 'bg-red-500/90',
                 paceState === 'fast' && 'bg-amber-500/80',
                 paceState === 'normal' && 'bg-emerald-500/60',
                 paceState === 'slow' && 'bg-sky-500/70',
@@ -326,7 +377,8 @@ function StructureTrack({
                 'absolute inset-y-0 transition-all duration-150',
                 structureState === 'strong' && 'bg-emerald-400/50',
                 structureState === 'neutral' && 'bg-slate-600/40',
-                structureState === 'weak' && 'bg-rose-400/40',
+                structureState === 'weak' && 'bg-amber-400/50',
+                structureState === 'very_weak' && 'bg-rose-500/60',
                 structureState === 'pause' && 'bg-slate-800/30',
                 isActive && 'ring-1 ring-white/50 z-10',
                 'hover:brightness-125',

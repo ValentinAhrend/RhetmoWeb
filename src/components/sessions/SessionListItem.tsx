@@ -112,7 +112,7 @@ export function SessionListItem({ session, onDelete }: SessionListItemProps) {
         <div className="flex items-center gap-3">
           <img src="/brand/rhetmoIcon.svg" alt="Rhetmo icon" className="h-10 w-10" />
           <div>
-            <p className="font-display text-lg font-semibold text-white">{session.title}</p>
+            <p className="font-display text-lg font-semibold text-white">{session.analysis?.title || session.title}</p>
             <div className="flex items-center gap-2 text-xs text-slate-300">
               <Clock className="h-4 w-4" />
               <span>{formatDate(session.createdAt)}</span>

@@ -5,9 +5,13 @@ import { createClient } from 'https://esm.sh/@supabase/supabase-js@2.39.3';
 const OPENAI_KEY = Deno.env.get('OPENAI_KEY')!;
 const OPENAI_API = 'https://api.openai.com/v1/chat/completions';
 
-// Model selection: nano for fast text tasks, mini for complex analysis
-const MODEL_NANO = 'gpt-5-nano-2025-08-07'; // Fast: punctuation, segmentation, classification
-const MODEL_MINI = 'gpt-5-mini-2025-08-07'; // Complex: analysis, issues, coaching highlights
+// Model selection strategy:
+// - MODEL_NANO: Fast & cheap. Use for classification, tagging, simple extraction
+//   Examples: punctuation, segmentation, filler detection, pace classification, title generation
+// - MODEL_MINI: Slower but smarter. Use ONLY for tasks requiring reasoning/advice
+//   Examples: overall issues analysis, coaching highlights (actionable advice)
+const MODEL_NANO = 'gpt-5-nano-2025-08-07';
+const MODEL_MINI = 'gpt-5-mini-2025-08-07';
 
 // --- Interface Definitions ---
 interface Token {
@@ -77,11 +81,29 @@ interface CoachingHighlight {
   severity?: 'low' | 'medium' | 'high';
 }
 
+// Detailed timing breakdown for performance debugging
+interface AnalysisTiming {
+  totalMs: number;
+  tokenFetchMs: number;
+  punctuationMs: number;
+  segmentationMs: number;
+  segmentAnalysisMs: number;
+  metricsMs: number;
+  aiCallsMs: number; // Combined time for all parallel AI calls
+  storageUploadMs: number;
+  tokenCount: number;
+  segmentCount: number;
+  wordCount: number;
+  analyzedAt: string; // ISO timestamp
+}
+
 interface AnalysisResult {
+  title: string;
   segments: SegmentAnalysis[];
   metrics: Metrics;
   issues: Issue[];
   coachingHighlights: CoachingHighlight[];
+  analysisTiming?: AnalysisTiming; // Performance data for debugging
 }
 
 // For content-based splitting
@@ -93,7 +115,6 @@ interface ContentSegmentDef {
 // --- OpenAI Utility ---
 async function callOpenAI(
   prompt: string, 
-  temperature = 0.3,
   model: string = MODEL_MINI
 ): Promise<string> {
   const response = await fetch(OPENAI_API, {
@@ -105,7 +126,6 @@ async function callOpenAI(
     body: JSON.stringify({
       model,
       messages: [{ role: 'user', content: prompt }],
-      temperature,
       // Force JSON output to minimize parsing errors
       response_format: { type: 'json_object' },
     }),
@@ -230,101 +250,51 @@ function splitIntoSegmentsDynamic(
 }
 
 // --- Add punctuation to tokens ---
-// This adds proper grammar (periods, commas) while preserving filler words
-async function addPunctuationToTokens(tokens: Token[]): Promise<Token[]> {
+// Simple rule-based punctuation - much faster than AI
+// Adds periods at long pauses, commas at short pauses
+function addPunctuationToTokens(tokens: Token[]): Token[] {
   if (tokens.length === 0) return tokens;
 
-  // Process in chunks to avoid hitting token limits
-  const CHUNK_SIZE = 150;
-  const chunks: Token[][] = [];
+  const LONG_PAUSE_MS = 800;  // Period after 800ms+ pause
+  const SHORT_PAUSE_MS = 300; // Comma after 300-800ms pause
   
-  for (let i = 0; i < tokens.length; i += CHUNK_SIZE) {
-    chunks.push(tokens.slice(i, i + CHUNK_SIZE));
-  }
-
-  const processedTokens: Token[] = [];
-
-  for (let chunkIdx = 0; chunkIdx < chunks.length; chunkIdx++) {
-    const chunk = chunks[chunkIdx];
-    const rawText = chunk.map((t) => t.text).join(' ');
-    const indexedTokens = chunk.map((t, idx) => `[${idx}] ${t.text}`).join(' ');
-
-    const prompt = `You are adding punctuation to a speech transcript. Your task is to add proper punctuation (periods, commas, question marks) while PRESERVING ALL WORDS EXACTLY as they appear, including filler words like "um", "uh", "like", "you know", etc.
-
-RAW TRANSCRIPT:
-"${rawText}"
-
-INDEXED TOKENS:
-${indexedTokens}
-
-RULES:
-1. KEEP ALL WORDS exactly as they are - do NOT remove or change any words
-2. KEEP ALL FILLER WORDS (um, uh, like, you know, basically, actually, sort of, kind of, right, I mean)
-3. Add periods (.) at the end of sentences
-4. Add commas (,) for natural pauses, lists, and clauses
-5. Add question marks (?) for questions
-6. Attach punctuation to the word it follows (e.g., "word." not "word .")
-7. Return the SAME NUMBER of tokens with punctuation attached
-
-Return ONLY a JSON object with the corrected text for each token index:
-{
-  "tokens": [
-    {"index": 0, "text": "Hello,"},
-    {"index": 1, "text": "um,"},
-    {"index": 2, "text": "my"},
-    {"index": 3, "text": "name"},
-    {"index": 4, "text": "is"},
-    {"index": 5, "text": "John."}
-  ]
-}`;
-
-    try {
-      const response = await callOpenAI(prompt, 0.1, MODEL_NANO);
-      
-      let parsed: { tokens?: { index: number; text: string }[] } = {};
-      try {
-        const jsonMatch = response.match(/\{[\s\S]*\}/s);
-        parsed = JSON.parse(jsonMatch ? jsonMatch[0] : response);
-      } catch (e) {
-        console.error(`Failed to parse punctuation JSON for chunk ${chunkIdx}:`, e);
-        // Fallback: use original tokens
-        processedTokens.push(...chunk);
-        continue;
-      }
-
-      if (!parsed.tokens || !Array.isArray(parsed.tokens)) {
-        processedTokens.push(...chunk);
-        continue;
-      }
-
-      // Apply punctuated text to tokens
-      const punctuatedMap = new Map<number, string>();
-      parsed.tokens.forEach((t) => {
-        if (typeof t.index === 'number' && typeof t.text === 'string') {
-          punctuatedMap.set(t.index, t.text);
-        }
-      });
-
-      chunk.forEach((token, idx) => {
-        const newText = punctuatedMap.get(idx);
-        if (newText) {
-          processedTokens.push({
-            ...token,
-            text: newText,
-          });
-        } else {
-          processedTokens.push(token);
-        }
-      });
-
-    } catch (e) {
-      console.error(`Error adding punctuation to chunk ${chunkIdx}:`, e);
-      processedTokens.push(...chunk);
+  // Sentence-ending words that shouldn't get commas
+  const questionWords = new Set(['what', 'where', 'when', 'why', 'how', 'who', 'which']);
+  
+  const result = tokens.map((token, idx) => {
+    let text = token.text.trim();
+    
+    // Skip if already has punctuation
+    if (/[.,!?;:]$/.test(text)) {
+      return token;
     }
-  }
-
-  console.log(`Added punctuation to ${processedTokens.length} tokens`);
-  return processedTokens;
+    
+    // Check gap to next token
+    if (idx < tokens.length - 1) {
+      const gap = tokens[idx + 1].start_ms - token.end_ms;
+      
+      if (gap >= LONG_PAUSE_MS) {
+        // Long pause = likely end of sentence
+        const lowerText = text.toLowerCase();
+        if (questionWords.has(lowerText.split(' ').pop() || '')) {
+          text += '?';
+        } else {
+          text += '.';
+        }
+      } else if (gap >= SHORT_PAUSE_MS) {
+        // Short pause = likely comma
+        text += ',';
+      }
+    } else {
+      // Last token gets a period
+      text += '.';
+    }
+    
+    return { ...token, text };
+  });
+  
+  console.log(`Added punctuation to ${result.length} tokens (rule-based)`);
+  return result;
 }
 
 // --- First-layer segmentation: by pauses (with dynamic duration limits) ---
@@ -386,7 +356,7 @@ Return ONLY a JSON object:
   ]
 }`;
 
-  const response = await callOpenAI(prompt, 0.2, MODEL_NANO);
+  const response = await callOpenAI(prompt, MODEL_NANO);
 
   let parsed: { segments?: ContentSegmentDef[] } = {};
   try {
@@ -488,70 +458,81 @@ function splitBySentences(
   return segments.length > 0 ? segments : [tokens];
 }
 
+// Known filler words and hedging phrases
+const FILLER_WORDS = new Set([
+  'um', 'uh', 'uhm', 'umm', 'er', 'ah', 'like', 'you know', 'so', 
+  'basically', 'actually', 'literally', 'right', 'okay', 'well'
+]);
+
+const HEDGING_STARTERS = ['sort of', 'kind of', 'i think', 'i guess', 'i mean', 
+  'maybe', 'perhaps', 'probably', 'might', 'could be'];
+
 // --- Segment Analysis ---
-async function analyzeSegment(
+// Rule-based analysis - no AI calls, instant results
+function analyzeSegment(
   segmentTokens: Token[],
   segmentIndex: number,
   conversationId: string,
-): Promise<SegmentAnalysis> {
+): SegmentAnalysis {
   const text = segmentTokens.map((t) => t.text).join(' ');
   const startMs = segmentTokens[0].start_ms;
   const endMs = segmentTokens[segmentTokens.length - 1].end_ms;
   const durationSec = (endMs - startMs) / 1000;
-  const wpm = (segmentTokens.length / durationSec) * 60;
+  const wpm = durationSec > 0 ? (segmentTokens.length / durationSec) * 60 : 0;
 
-  const detailedTokens = segmentTokens
-    .map((t, idx) => `[${idx}] ${t.text}`)
-    .join(' ');
+  // Rule-based filler detection
+  const fillerWords: { word: string; index: number }[] = [];
+  const hedging: { phrase: string; startIndex: number; endIndex: number }[] = [];
+  
+  segmentTokens.forEach((token, idx) => {
+    const word = token.text.toLowerCase().replace(/[.,!?;:]/g, '');
+    
+    // Check single-word fillers
+    if (FILLER_WORDS.has(word)) {
+      fillerWords.push({ word, index: idx });
+    }
+    
+    // Check multi-word hedging (look ahead)
+    if (idx < segmentTokens.length - 1) {
+      const twoWords = `${word} ${segmentTokens[idx + 1].text.toLowerCase().replace(/[.,!?;:]/g, '')}`;
+      for (const hedge of HEDGING_STARTERS) {
+        if (twoWords.startsWith(hedge)) {
+          const wordCount = hedge.split(' ').length;
+          hedging.push({ 
+            phrase: hedge, 
+            startIndex: idx, 
+            endIndex: idx + wordCount - 1 
+          });
+          break;
+        }
+      }
+    }
+  });
 
-  const prompt = `Analyze this speech segment for a presentation. Your primary task is to precisely map any identified issues (especially filler words and hedging) back to their corresponding word index in the segment.
-
-SEGMENT TRANSCRIPT:
-"${text}"
-
-DETAILED TOKENS (Use these indices for your output):
-${detailedTokens}
-
-DURATION: ${durationSec.toFixed(1)} seconds
-WORDS: ${segmentTokens.length}
-WPM: ${wpm.toFixed(0)}
-
-Analyze for:
-1. Filler words (e.g., um, uh, like, you know, sort of, kind of, actually, basically, right, I mean)
-2. Hedging language (e.g., maybe, perhaps, I think, I guess, possibly)
-3. Pace issues (too fast >180 WPM, too slow <120 WPM)
-4. Grammar/language mistakes
-5. Structure quality (clarity, flow, organization)
-6. Good elements (emphasis, examples, clear statements)
-
-Output ONLY a single JSON object. Ensure the 'index' fields are present and correct, referencing the DETAILED TOKENS list.
-
-{
-  "fillerWords": [{"word": "um", "index": 5, "normalized": "um"}],
-  "hedging": [{"phrase": "sort of", "startIndex": 10, "endIndex": 11}],
-  "pace": {"status": "fast|normal|slow", "severity": "low|medium|high"},
-  "grammar": [{"issue": "Run-on sentence", "startIndex": 3, "endIndex": 8}],
-  "structure": {"quality": "description", "severity": "low|medium|high"},
-  "goodElements": ["specific positive aspect"]
-}`;
-
-  const response = await callOpenAI(prompt, 0.2, MODEL_MINI);
-
-  let analysis: any;
-  try {
-    const jsonMatch = response.match(/\{[\s\S]*\}/s);
-    analysis = JSON.parse(jsonMatch ? jsonMatch[0] : response);
-  } catch (e) {
-    console.error(`Failed to parse JSON for segment ${segmentIndex}:`, response, e);
-    analysis = {
-      fillerWords: [],
-      hedging: [],
-      pace: { status: 'normal', severity: 'low' },
-      grammar: [],
-      structure: { quality: 'No specific issues detected', severity: 'low' },
-      goodElements: [],
-    };
+  // Determine pace based on WPM
+  let paceStatus: 'slow' | 'normal' | 'fast' | 'very_fast' = 'normal';
+  let paceSeverity: 'low' | 'medium' | 'high' = 'low';
+  
+  if (wpm < 110) {
+    paceStatus = 'slow';
+    paceSeverity = 'medium';
+  } else if (wpm > 200) {
+    paceStatus = 'very_fast';
+    paceSeverity = 'high';
+  } else if (wpm > 160) {
+    paceStatus = 'fast';
+    paceSeverity = 'medium';
   }
+
+  const analysis = {
+    fillerWords,
+    hedging,
+    pace: { status: paceStatus, severity: paceSeverity },
+    grammar: [],
+    structure: { quality: 'No specific issues detected', severity: 'low' as const },
+    goodElements: [],
+    clarity: { score: 'clear' as const, issues: [] },
+  };
 
   const segmentId = `seg-${conversationId}-${segmentIndex}`;
   const tokenWithTags: TokenWithTags[] = segmentTokens.map((token, idx) => {
@@ -615,13 +596,16 @@ Output ONLY a single JSON object. Ensure the 'index' fields are present and corr
   // Segment-level tags
   const segmentTags: Tag[] = [];
 
-  if (analysis.pace?.status === 'fast' || analysis.pace?.status === 'slow') {
+  // Pace tags (including very_fast and slow)
+  if (analysis.pace?.status === 'very_fast' || analysis.pace?.status === 'fast' || analysis.pace?.status === 'slow') {
     segmentTags.push({
       id: `${segmentId}-pace`,
       kind: analysis.pace.status,
-      severity: analysis.pace.severity || 'medium',
+      severity: analysis.pace.severity || (analysis.pace.status === 'very_fast' ? 'high' : 'medium'),
       label: `Segment spoken at ~${wpm.toFixed(0)} WPM${
-        analysis.pace.status === 'fast' ? ', target 150-165' : ''
+        analysis.pace.status === 'very_fast' ? ' - way too fast! Target 110-160' :
+        analysis.pace.status === 'fast' ? ' - slightly fast, target 110-160' :
+        analysis.pace.status === 'slow' ? ' - too slow, target 110-160' : ''
       }`,
     });
   }
@@ -630,12 +614,36 @@ Output ONLY a single JSON object. Ensure the 'index' fields are present and corr
     (sum, t) => sum + t.tags.filter((tag) => tag.kind === 'filler').length,
     0,
   );
+  
+  // Add filler tag if there are multiple fillers
   if (totalFillers > 2) {
     segmentTags.push({
       id: `${segmentId}-filler`,
       kind: 'filler',
-      severity: 'medium',
+      severity: totalFillers > 4 ? 'high' : 'medium',
       label: `Multiple filler words detected (${totalFillers})`,
+    });
+  }
+
+  // Clarity/unclear point tags based on AI analysis
+  if (analysis.clarity?.score === 'unclear' || analysis.clarity?.score === 'very_unclear') {
+    const clarityIssues = analysis.clarity.issues?.join('; ') || 'Unclear messaging';
+    segmentTags.push({
+      id: `${segmentId}-unclear`,
+      kind: 'unclear_point',
+      severity: analysis.clarity.score === 'very_unclear' ? 'high' : 'medium',
+      label: clarityIssues,
+    });
+  }
+
+  // Hedging at segment level (if multiple hedging phrases)
+  const hedgingCount = analysis.hedging?.length || 0;
+  if (hedgingCount > 1) {
+    segmentTags.push({
+      id: `${segmentId}-hedging`,
+      kind: 'hedging',
+      severity: hedgingCount > 2 ? 'high' : 'medium',
+      label: `Multiple hedging phrases weaken your message (${hedgingCount} instances)`,
     });
   }
 
@@ -671,63 +679,41 @@ Output ONLY a single JSON object. Ensure the 'index' fields are present and corr
 }
 
 // --- Overall Issues ---
+// Uses MODEL_NANO with minimal prompt for speed
 async function generateOverallIssues(
   segments: SegmentAnalysis[],
   conversationId: string,
 ): Promise<Issue[]> {
-  const allText = segments.map((s) => s.text).join(' ');
-
-  const fillerTokenIds = segments.flatMap((s) =>
-    s.tokens
-      .filter((t) => t.tags.some((tag) => tag.kind === 'filler'))
-      .map((t) => t.id)
+  // Count totals only - no text needed
+  const totalFillers = segments.reduce((sum, s) => 
+    sum + s.tokens.filter(t => t.tags.some(tag => tag.kind === 'filler')).length, 0
   );
+  const fastSegs = segments.filter(s => s.tags.some(t => t.kind === 'fast' || t.kind === 'very_fast')).length;
+  const slowSegs = segments.filter(s => s.tags.some(t => t.kind === 'slow')).length;
+  const hedgeSegs = segments.filter(s => s.tags.some(t => t.kind === 'hedging')).length;
 
-  const prompt = `Review this complete presentation transcript and identify 3-5 key issues that need improvement.
+  // Ultra-minimal prompt - just numbers
+  const prompt = `Speech: ${segments.length} segs, ${totalFillers} fillers, ${fastSegs} fast, ${slowSegs} slow, ${hedgeSegs} hedging.
+Return 2-3 issues as JSON: [{"kind":"filler|pace|hedging","severity":"low|medium|high","message":"10 words max","segmentIndices":[]}]`;
 
-FULL TRANSCRIPT:
-${allText}
+  const response = await callOpenAI(prompt, MODEL_NANO);
 
-
-SEGMENT SUMMARIES:
-${segments
-  .map(
-    (s, i) =>
-      `Segment ${i + 1} (Index: ${i}): ${s.tags
-        .map((t) => t.label)
-        .join('; ')}`
-  )
-  .join('\n')}
-
-Identify the most important issues across:
-- Filler word patterns
-- Pace consistency
-- Structure and flow
-- Language clarity
-- Key improvement opportunities
-
-If an issue pertains to specific segments, provide the 0-based index of those segments (Segment Indices). If an issue pertains to filler words, you may also reference their specific token IDs: ${fillerTokenIds
-    .slice(0, 10)
-    .join(', ')}${fillerTokenIds.length > 10 ? '...' : ''}
-
-Output ONLY a JSON array of issues:
-[
-  {
-    "kind": "filler_cluster|fast_segment|structure|hedging|complex_sentence",
-    "severity": "low|medium|high",
-    "message": "Specific actionable feedback",
-    "segmentIndices": [0, 2]
-  }
-]`;
-
-  const response = await callOpenAI(prompt, 0.3, MODEL_MINI);
-
-  let issuesData;
+  let issuesData: any[] = [];
   try {
-    const jsonMatch = response.match(/\[[\s\S]*\]/s);
-    issuesData = JSON.parse(jsonMatch ? jsonMatch[0] : response);
+    const arrayMatch = response.match(/\[[\s\S]*\]/s);
+    if (arrayMatch) {
+      issuesData = JSON.parse(arrayMatch[0]);
+    } else {
+      const objectMatches = response.match(/\{[^{}]*\}/g);
+      if (objectMatches) {
+        issuesData = objectMatches.map(obj => {
+          try { return JSON.parse(obj); } catch { return null; }
+        }).filter(Boolean);
+        console.log(`Recovered ${issuesData.length} issues from malformed JSON`);
+      }
+    }
   } catch (e) {
-    console.error('Failed to parse Issues JSON:', response, e);
+    console.error('Failed to parse Issues JSON:', e);
     issuesData = [];
   }
 
@@ -735,94 +721,85 @@ Output ONLY a JSON array of issues:
     id: `issue-${conversationId}-${idx}`,
     kind: issue.kind || 'general',
     severity: issue.severity || 'medium',
-    message: issue.message || 'Review this section for improvement',
-    segmentIds: (issue.segmentIndices || []).map(
-      (i: number) => `seg-${conversationId}-${i}`,
-    ),
+    message: issue.message || 'Review this section',
+    segmentIds: (issue.segmentIndices || []).map((i: number) => `seg-${conversationId}-${i}`),
     tokenIds: issue.tokenIds || [],
   }));
 }
 
 // --- Generate Coaching Highlights ---
-// This creates a summary of the top strengths and areas for improvement
+// Uses MODEL_NANO with context for personalized feedback
 async function generateCoachingHighlights(
   segments: SegmentAnalysis[],
   metrics: Metrics,
   issues: Issue[],
   conversationId: string,
 ): Promise<CoachingHighlight[]> {
+  // Get first ~150 words for content context (enough to understand topic without being too long)
   const allText = segments.map((s) => s.text).join(' ');
+  const truncatedText = allText.split(/\s+/).slice(0, 150).join(' ');
   
-  // Collect all good elements from segments
-  const goodElements: string[] = [];
-  segments.forEach((s) => {
-    s.tags
-      .filter((t) => t.kind === 'good_emphasis')
-      .forEach((t) => goodElements.push(t.label));
-  });
+  // Build issue summary
+  const issueMessages = issues.slice(0, 3).map(i => i.message).join('; ') || 'none';
+  
+  // Find specific examples for personalization
+  const fillerExamples = segments
+    .flatMap(s => s.tokens.filter(t => t.tags.some(tag => tag.kind === 'filler')))
+    .slice(0, 3)
+    .map(t => t.text.toLowerCase().replace(/[.,!?]/g, ''));
+  const fillerList = [...new Set(fillerExamples)].join(', ') || 'none';
+  
+  // Check for pace variation
+  const fastCount = segments.filter(s => s.tags.some(t => t.kind === 'fast' || t.kind === 'very_fast')).length;
+  const slowCount = segments.filter(s => s.tags.some(t => t.kind === 'slow')).length;
+  const paceNote = fastCount > 2 ? 'rushing in parts' : slowCount > 2 ? 'dragging in parts' : 'consistent';
 
-  const prompt = `You are a professional speech coach analyzing a presentation. Based on the transcript and analysis data, identify the TOP 2-3 STRENGTHS and TOP 2-3 AREAS FOR IMPROVEMENT.
+  const prompt = `Analyze this speech and give personalized coaching feedback.
 
-FULL TRANSCRIPT:
-${allText}
+SPEECH EXCERPT: "${truncatedText}"
 
 METRICS:
-- Duration: ${metrics.durationSec} seconds
-- Average pace: ${metrics.avgWpm} WPM (ideal: 140-165 WPM)
-- Filler words: ${metrics.fillerCount} total (${metrics.fillerPerMinute}/min)
+- Duration: ${metrics.durationSec}s, ${metrics.totalWords} words
+- Pace: ${metrics.avgWpm} WPM (ideal: 110-160), ${paceNote}
+- Fillers: ${metrics.fillerCount} total (${metrics.fillerPerMinute}/min), examples: ${fillerList}
 
-IDENTIFIED ISSUES:
-${issues.map((i) => `- [${i.severity}] ${i.message}`).join('\n')}
+ISSUES: ${issueMessages}
 
-POSITIVE ELEMENTS FOUND:
-${goodElements.length > 0 ? goodElements.join('\n') : 'None specifically identified'}
+Give 2-3 specific strengths and 2-3 actionable improvements based on THIS speech.
+Reference the actual content/topic when relevant. Be specific, not generic.
 
-Create coaching highlights that:
-1. Are specific and actionable
-2. Reference concrete examples from the transcript when possible
-3. Focus on the MOST impactful things - what will make the biggest difference
-4. For improvements, suggest HOW to fix it, not just what's wrong
-5. For strengths, explain WHY it works well
+Return JSON:
+{"highlights":[
+  {"type":"strength","title":"4-6 words","detail":"20-30 words, specific to this speech"},
+  {"type":"improvement","title":"4-6 words","detail":"20-30 words, actionable advice","severity":"low|medium|high"}
+]}`;
 
-Return ONLY a JSON object:
-{
-  "highlights": [
-    {
-      "type": "strength",
-      "title": "Clear opening hook",
-      "detail": "You grabbed attention immediately by stating a relatable problem. This establishes credibility and relevance."
-    },
-    {
-      "type": "improvement",
-      "title": "Reduce filler clusters",
-      "detail": "Around the 45-second mark, you used 'um' and 'like' 4 times in one sentence. Try pausing silently instead - it projects confidence.",
-      "severity": "medium"
-    }
-  ]
-}`;
-
-  const response = await callOpenAI(prompt, 0.4, MODEL_MINI);
-
-  let parsed: { highlights?: CoachingHighlight[] } = {};
   try {
-    const jsonMatch = response.match(/\{[\s\S]*\}/s);
-    parsed = JSON.parse(jsonMatch ? jsonMatch[0] : response);
+    const response = await callOpenAI(prompt, MODEL_NANO);
+
+    let parsed: { highlights?: CoachingHighlight[] } = {};
+    try {
+      const jsonMatch = response.match(/\{[\s\S]*\}/s);
+      parsed = JSON.parse(jsonMatch ? jsonMatch[0] : response);
+    } catch (e) {
+      console.error('Failed to parse coaching highlights JSON:', e);
+      return generateFallbackHighlights(metrics, issues);
+    }
+
+    if (!parsed.highlights || !Array.isArray(parsed.highlights)) {
+      return generateFallbackHighlights(metrics, issues);
+    }
+
+    return parsed.highlights.map((h) => ({
+      type: h.type || 'improvement',
+      title: h.title || 'General feedback',
+      detail: h.detail || '',
+      severity: h.severity,
+    }));
   } catch (e) {
-    console.error('Failed to parse coaching highlights JSON:', response, e);
-    // Fallback: generate basic highlights from metrics
+    console.error('Error generating coaching highlights:', e);
     return generateFallbackHighlights(metrics, issues);
   }
-
-  if (!parsed.highlights || !Array.isArray(parsed.highlights)) {
-    return generateFallbackHighlights(metrics, issues);
-  }
-
-  return parsed.highlights.map((h) => ({
-    type: h.type || 'improvement',
-    title: h.title || 'General feedback',
-    detail: h.detail || '',
-    severity: h.severity,
-  }));
 }
 
 // Fallback highlights if AI call fails
@@ -832,19 +809,26 @@ function generateFallbackHighlights(
 ): CoachingHighlight[] {
   const highlights: CoachingHighlight[] = [];
 
-  // Pace feedback
-  if (metrics.avgWpm >= 140 && metrics.avgWpm <= 165) {
+  // Pace feedback (using new thresholds: 110-160 WPM is good)
+  if (metrics.avgWpm >= 110 && metrics.avgWpm <= 160) {
     highlights.push({
       type: 'strength',
       title: 'Good speaking pace',
       detail: `Your average pace of ${metrics.avgWpm} WPM is in the ideal range for clear communication.`,
     });
-  } else if (metrics.avgWpm > 165) {
+  } else if (metrics.avgWpm > 160) {
     highlights.push({
       type: 'improvement',
       title: 'Slow down your pace',
-      detail: `At ${metrics.avgWpm} WPM, you're speaking faster than ideal. Try adding brief pauses between key points.`,
-      severity: metrics.avgWpm > 180 ? 'high' : 'medium',
+      detail: `At ${metrics.avgWpm} WPM, you're speaking faster than ideal (110-160 WPM). Try adding brief pauses between key points.`,
+      severity: metrics.avgWpm > 200 ? 'high' : 'medium',
+    });
+  } else if (metrics.avgWpm < 110) {
+    highlights.push({
+      type: 'improvement',
+      title: 'Speed up your pace',
+      detail: `At ${metrics.avgWpm} WPM, you're speaking slower than ideal (110-160 WPM). Try to maintain more energy and momentum.`,
+      severity: 'low',
     });
   }
 
@@ -880,6 +864,72 @@ function generateFallbackHighlights(
   }
 
   return highlights;
+}
+
+// --- Generate Session Title ---
+// Creates a short, descriptive title based on the content of the speech
+async function generateSessionTitle(
+  segments: SegmentAnalysis[],
+  metrics: Metrics,
+): Promise<string> {
+  // Get first ~100 words only - enough for topic detection
+  const allText = segments.map((s) => s.text).join(' ');
+  const truncatedText = allText.split(/\s+/).slice(0, 100).join(' ');
+  
+  // If very short or no content, return generic title
+  if (!truncatedText || truncatedText.length < 20) {
+    return 'Untitled Session';
+  }
+
+  // Minimal prompt - just the text and simple instruction
+  const prompt = `Title this speech in 3-5 words: "${truncatedText}"
+Return JSON: {"title":"Your Title Here"}`;
+
+  try {
+    const response = await callOpenAI(prompt, MODEL_NANO);
+    
+    let parsed: { title?: string } = {};
+    try {
+      const jsonMatch = response.match(/\{[\s\S]*\}/s);
+      parsed = JSON.parse(jsonMatch ? jsonMatch[0] : response);
+    } catch (e) {
+      console.error('Failed to parse title JSON:', e);
+      return generateFallbackTitle(truncatedText);
+    }
+
+    if (parsed.title && typeof parsed.title === 'string' && parsed.title.length > 0) {
+      // Clean up the title - remove quotes, limit length
+      let title = parsed.title.replace(/^["']|["']$/g, '').trim();
+      // Limit to ~50 chars if somehow too long
+      if (title.length > 50) {
+        title = title.substring(0, 47) + '...';
+      }
+      return title;
+    }
+    
+    return generateFallbackTitle(truncatedText);
+  } catch (e) {
+    console.error('Error generating title:', e);
+    return generateFallbackTitle(truncatedText);
+  }
+}
+
+// Fallback title generation without AI
+function generateFallbackTitle(text: string): string {
+  // Extract first few meaningful words
+  const words = text
+    .replace(/[^a-zA-Z\s]/g, '')
+    .split(/\s+/)
+    .filter((w) => w.length > 3)
+    .slice(0, 4);
+  
+  if (words.length >= 2) {
+    return words.slice(0, 3).map(w => 
+      w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
+    ).join(' ') + '...';
+  }
+  
+  return 'Untitled Session';
 }
 
 // --- Metrics Calculation ---
@@ -945,12 +995,39 @@ function calculateMetrics(
 }
 
 // --- Deno Handler ---
-Deno.serve(async (_req) => {
+const corsHeaders = {
+  'Access-Control-Allow-Origin': '*',
+  'Access-Control-Allow-Methods': 'GET, POST, PUT, DELETE, OPTIONS',
+  'Access-Control-Allow-Headers': 'Content-Type, Authorization, apikey, x-client-info',
+};
+
+Deno.serve(async (req) => {
+  const startTime = Date.now();
+  const logTime = (label: string) => console.log(`[${Date.now() - startTime}ms] ${label}`);
+  
+  // Timing tracker for each step
+  const timing: Record<string, number> = {};
+  const markStart = (key: string) => { timing[`${key}_start`] = Date.now(); };
+  const markEnd = (key: string) => { 
+    timing[key] = Date.now() - (timing[`${key}_start`] || startTime);
+    delete timing[`${key}_start`];
+  };
+  
+  // Handle CORS preflight requests
+  if (req.method === 'OPTIONS') {
+    return new Response(null, {
+      status: 204,
+      headers: corsHeaders,
+    });
+  }
+
   try {
     if (!OPENAI_KEY) {
       throw new Error('OPENAI_KEY environment variable is not set');
     }
 
+    logTime('Starting analysis...');
+    
     const supabaseClient = createClient(
       Deno.env.get('SUPABASE_URL') ?? '',
       Deno.env.get('SUPABASE_SERVICE_ROLE_KEY') ?? '',
@@ -962,6 +1039,7 @@ Deno.serve(async (_req) => {
     );
 
     // Get the latest conversation_id
+    markStart('tokenFetch');
     const { data: latestToken, error: latestError } = await supabaseClient
       .from('tokens')
       .select('conversation_id')
@@ -974,6 +1052,7 @@ Deno.serve(async (_req) => {
     }
 
     const conversationId = latestToken.conversation_id;
+    logTime(`Got conversation ID: ${conversationId}`);
 
     // Get all tokens for this conversation
     const { data: tokens, error: tokensError } = await supabaseClient
@@ -985,66 +1064,67 @@ Deno.serve(async (_req) => {
     if (tokensError || !tokens || tokens.length === 0) {
       throw new Error('No tokens found for conversation');
     }
+    markEnd('tokenFetch');
 
-    console.log(
-      `Analyzing ${tokens.length} tokens for conversation ${conversationId}`,
-    );
+    logTime(`Fetched ${tokens.length} tokens`);
 
-    // 0) Add punctuation to tokens (periods, commas) while preserving filler words
-    console.log('Adding punctuation to transcript...');
-    const punctuatedTokens = await addPunctuationToTokens(tokens);
-    console.log('Punctuation added successfully');
+    // 0) Add punctuation to tokens (periods, commas) - fast rule-based approach
+    markStart('punctuation');
+    const punctuatedTokens = addPunctuationToTokens(tokens);
+    markEnd('punctuation');
+    logTime('Punctuation added');
 
     // 1) Pause-based segmentation into blocks
+    markStart('segmentation');
     const { segments: pauseBlocks, pauses } = splitIntoSegments(punctuatedTokens);
-    console.log(
-      `Pause-based split: ${pauseBlocks.length} blocks with ${pauses.length} pauses`,
-    );
+    logTime(`Pause-based split: ${pauseBlocks.length} blocks`);
 
-    // 2) Within each block, split further by content (or by sentences as fallback)
-    const contentSegmentsPerBlock: Token[][][] = [];
-    for (let blockIdx = 0; blockIdx < pauseBlocks.length; blockIdx++) {
-      const blockTokens = pauseBlocks[blockIdx];
-      
-      // Try AI-based content segmentation first
-      let contentSegments = await splitSegmentByContent(
-        blockTokens,
-        blockIdx,
-        conversationId,
-      );
-      
-      // If AI only returned 1 segment but we have many sentences, use fallback
-      if (contentSegments.length === 1 && blockTokens.length > 30) {
-        const text = blockTokens.map(t => t.text).join(' ');
-        const sentenceCount = (text.match(/[.!?]+/g) || []).length;
-        
-        if (sentenceCount > 4) {
-          console.log(`Block ${blockIdx}: AI returned 1 segment but found ${sentenceCount} sentences. Using fallback splitter.`);
-          contentSegments = splitBySentences(blockTokens, 4);
-        }
-      }
-      
-      console.log(`Block ${blockIdx}: ${blockTokens.length} tokens -> ${contentSegments.length} content segments`);
-      contentSegmentsPerBlock.push(contentSegments);
-    }
+    // 2) Within each block, split by sentences (deterministic, fast, no AI needed)
+    const contentSegmentsPerBlock: Token[][][] = pauseBlocks.map((blockTokens) => {
+      return splitBySentences(blockTokens, 4);
+    });
+    
+    // Count total segments
+    const totalSegments = contentSegmentsPerBlock.reduce((sum, block) => sum + block.length, 0);
+    markEnd('segmentation');
+    logTime(`Sentence split complete: ${totalSegments} segments`);
 
-    // 3) Analyze each content segment and interleave pause segments
-    let globalSegmentIndex = 0;
-    const speechSegments: SegmentAnalysis[] = [];
-    const allSegments: SegmentAnalysis[] = [];
-
+    // 3) Analyze each content segment in PARALLEL, then interleave pause segments
+    // First, flatten all segments with their indices for parallel processing
+    markStart('segmentAnalysis');
+    const segmentsToAnalyze: { tokens: Token[]; blockIdx: number; segIdx: number; globalIdx: number }[] = [];
+    let globalIdx = 0;
     for (let blockIdx = 0; blockIdx < contentSegmentsPerBlock.length; blockIdx++) {
       const contentSegments = contentSegmentsPerBlock[blockIdx];
+      for (let segIdx = 0; segIdx < contentSegments.length; segIdx++) {
+        segmentsToAnalyze.push({
+          tokens: contentSegments[segIdx],
+          blockIdx,
+          segIdx,
+          globalIdx: globalIdx++,
+        });
+      }
+    }
 
-      for (const segTokens of contentSegments) {
-        const analysis = await analyzeSegment(
-          segTokens,
-          globalSegmentIndex,
-          conversationId,
-        );
-        speechSegments.push(analysis);
-        allSegments.push(analysis);
-        globalSegmentIndex++;
+    // Analyze all segments (synchronous, rule-based - instant)
+    logTime(`Analyzing ${segmentsToAnalyze.length} segments (rule-based)`);
+    const analyzedSegments: SegmentAnalysis[] = segmentsToAnalyze.map(({ tokens, globalIdx }) =>
+      analyzeSegment(tokens, globalIdx, conversationId)
+    );
+    markEnd('segmentAnalysis');
+    logTime('Segment analysis complete');
+
+    // Now reconstruct the final array with pauses interleaved
+    const speechSegments: SegmentAnalysis[] = [...analyzedSegments];
+    const allSegments: SegmentAnalysis[] = [];
+    
+    let analyzedIdx = 0;
+    for (let blockIdx = 0; blockIdx < contentSegmentsPerBlock.length; blockIdx++) {
+      const contentSegments = contentSegmentsPerBlock[blockIdx];
+      
+      // Add all speech segments for this block
+      for (let i = 0; i < contentSegments.length; i++) {
+        allSegments.push(analyzedSegments[analyzedIdx++]);
       }
 
       // Insert pause segment between blocks
@@ -1061,9 +1141,9 @@ Deno.serve(async (_req) => {
           tags: [
             {
               id: `pause-${conversationId}-${blockIdx}-tag`,
-              kind: 'long_pause',
+              kind: 'pause',
               severity,
-              label: `Pause duration: ${(pause.durationMs / 1000).toFixed(1)}s`,
+              label: `Pause: ${(pause.durationMs / 1000).toFixed(1)}s`,
               data: { durationMs: pause.durationMs },
             },
           ],
@@ -1075,30 +1155,51 @@ Deno.serve(async (_req) => {
       `Final segmentation: ${speechSegments.length} speech segments + ${pauses.length} pauses`,
     );
 
-    // 4) Overall issues + metrics based on speech segments
-    const issues = await generateOverallIssues(speechSegments, conversationId);
+    // Calculate metrics first (synchronous)
+    markStart('metrics');
     const metrics = calculateMetrics(speechSegments, pauses);
+    markEnd('metrics');
+    logTime('Metrics calculated');
 
-    // 5) Generate coaching highlights (AI summary of key strengths and improvements)
-    console.log('Generating coaching highlights...');
-    const coachingHighlights = await generateCoachingHighlights(
-      speechSegments,
-      metrics,
-      issues,
-      conversationId,
-    );
-    console.log(`Generated ${coachingHighlights.length} coaching highlights`);
+    // 4) Run ALL AI calls in PARALLEL (issues, title, coaching)
+    markStart('aiCalls');
+    logTime('Starting all AI calls in parallel');
+    const [issues, title, coachingHighlights] = await Promise.all([
+      generateOverallIssues(speechSegments, conversationId),
+      generateSessionTitle(speechSegments, metrics),
+      generateCoachingHighlights(speechSegments, metrics, [], conversationId), // Pass empty issues since parallel
+    ]);
+    markEnd('aiCalls');
+    logTime(`AI complete: ${issues.length} issues, title: "${title}", ${coachingHighlights.length} highlights`);
+
+    // Build timing data for debugging
+    const analysisTiming: AnalysisTiming = {
+      totalMs: Date.now() - startTime,
+      tokenFetchMs: timing['tokenFetch'] || 0,
+      punctuationMs: timing['punctuation'] || 0,
+      segmentationMs: timing['segmentation'] || 0,
+      segmentAnalysisMs: timing['segmentAnalysis'] || 0,
+      metricsMs: timing['metrics'] || 0,
+      aiCallsMs: timing['aiCalls'] || 0,
+      storageUploadMs: 0, // Will update after upload
+      tokenCount: tokens.length,
+      segmentCount: allSegments.length,
+      wordCount: metrics.totalWords,
+      analyzedAt: new Date().toISOString(),
+    };
 
     const analysis: AnalysisResult = {
+      title,
       segments: allSegments,
       metrics,
       issues,
       coachingHighlights,
+      analysisTiming,
     };
 
-    // 6) Save to storage bucket
+    // 7) Save to storage bucket
+    markStart('storageUpload');
     const analysisJson = JSON.stringify(analysis, null, 2);
-    console.log(analysis);
     const fileName = `${conversationId}-analysis.json`;
 
     const { error: uploadError } = await supabaseClient.storage
@@ -1111,6 +1212,44 @@ Deno.serve(async (_req) => {
     if (uploadError) {
       throw uploadError;
     }
+    markEnd('storageUpload');
+    
+    // Update timing with final storage time
+    analysis.analysisTiming!.storageUploadMs = timing['storageUpload'] || 0;
+    analysis.analysisTiming!.totalMs = Date.now() - startTime;
+    
+    // Re-upload with final timing (quick since upsert)
+    await supabaseClient.storage
+      .from('a')
+      .upload(fileName, JSON.stringify(analysis, null, 2), {
+        contentType: 'application/json',
+        upsert: true,
+      });
+    
+    logTime('Analysis uploaded to storage');
+
+    // Update conversation status to 'finished'
+    const { error: statusError } = await supabaseClient
+      .from('conversations')
+      .upsert(
+        {
+          conversation_id: conversationId,
+          status: 'finished',
+          timestamp: Math.floor(Date.now() / 1000),
+        },
+        {
+          onConflict: 'conversation_id',
+          ignoreDuplicates: false,
+        }
+      );
+
+    if (statusError) {
+      console.error('Failed to update conversation status:', statusError);
+    } else {
+      logTime('Conversation marked as finished');
+    }
+
+    logTime('ANALYSIS COMPLETE');
 
     return new Response(
       JSON.stringify({
@@ -1122,18 +1261,24 @@ Deno.serve(async (_req) => {
           issues: issues.length,
           metrics,
         },
+        totalTimeMs: Date.now() - startTime,
       }),
       {
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 200,
       },
     );
   } catch (error: any) {
-    console.error('Error:', error);
+    const errorTime = Date.now() - startTime;
+    console.error(`[${errorTime}ms] ERROR:`, error.message, error.stack);
     return new Response(
-      JSON.stringify({ error: error.message }),
+      JSON.stringify({ 
+        error: error.message,
+        stack: error.stack,
+        timeMs: errorTime,
+      }),
       {
-        headers: { 'Content-Type': 'application/json' },
+        headers: { ...corsHeaders, 'Content-Type': 'application/json' },
         status: 500,
       },
     );

@@ -15,43 +15,67 @@ serve(async (req) => {
       Deno.env.get("SUPABASE_URL") ?? "",
       Deno.env.get("SUPABASE_SERVICE_ROLE_KEY") ?? ""
     );
-    // List newest file in bucket "a"
-    const { data, error } = await supabase.storage
-      .from("a")
-      .list("", {
-        limit: 1,
-        sortBy: { column: "created_at", order: "desc" },
-      });
-    if (error) throw error;
-    if (!data || data.length === 0) {
-      return new Response(
-        JSON.stringify({ error: "No files found in bucket" }),
-        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
-      );
+
+    // Check if conversation_id is provided in the request body
+    let conversationId: string | null = null;
+    try {
+      const body = await req.json();
+      conversationId = body.conversation_id || null;
+    } catch {
+      // No body or invalid JSON - will fetch newest file
     }
-    const newestFile = data[0];
+
+    let fileName: string;
+
+    if (conversationId) {
+      // Fetch specific analysis by conversation ID
+      fileName = `${conversationId}-analysis.json`;
+      console.log(`Fetching analysis for conversation: ${conversationId}`);
+    } else {
+      // List newest file in bucket "a"
+      const { data, error } = await supabase.storage
+        .from("a")
+        .list("", {
+          limit: 1,
+          sortBy: { column: "created_at", order: "desc" },
+        });
+      if (error) throw error;
+      if (!data || data.length === 0) {
+        return new Response(
+          JSON.stringify({ error: "No files found in bucket" }),
+          { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+        );
+      }
+      fileName = data[0].name;
+      console.log(`Fetching newest analysis: ${fileName}`);
+    }
+
     // Download the file
     const { data: fileData, error: downloadError } = await supabase.storage
       .from("a")
-      .download(newestFile.name);
-    if (downloadError) throw downloadError;
+      .download(fileName);
+    
+    if (downloadError) {
+      console.error(`Failed to download ${fileName}:`, downloadError);
+      return new Response(
+        JSON.stringify({ error: `Analysis not found: ${fileName}` }),
+        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } }
+      );
+    }
+
     // Return the file directly
     return new Response(fileData, {
       status: 200,
       headers: {
         ...corsHeaders,
-        "Content-Type": newestFile.metadata?.mimetype || "application/octet-stream",
-        "Content-Disposition": `inline; filename="${newestFile.name}"`,
+        "Content-Type": "application/json",
+        "Content-Disposition": `inline; filename="${fileName}"`,
       },
     });
-  } catch (err) {
+  } catch (err: any) {
     return new Response(
       JSON.stringify({ error: err.message }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   }
 });
-
-
-
-

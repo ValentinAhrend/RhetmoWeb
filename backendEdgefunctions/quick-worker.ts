@@ -67,10 +67,10 @@ interface Session {
       avgWpm: number
       fillerCount: number
       fillerPerMinute: number
-      avgHeartRate: number | null
-      peakHeartRate: number | null
-      movementScore: number | null
-      stressSpeedIndex: number | null
+      avgHeartRate: number
+      peakHeartRate: number
+      movementScore: number
+      stressSpeedIndex: number
     }
     issues: Array<{
       id: string
@@ -172,8 +172,37 @@ serve(async (req) => {
     ).length
     const fillerPerMinute = durationSec > 0 ? parseFloat(((fillerCount / durationSec) * 60).toFixed(1)) : 0
 
+    // Mock biometric data (consistent with clever-service.ts)
+    // These will be replaced with real Apple Watch data when available
+    const movementScore = parseFloat((0.35 + Math.random() * 0.3).toFixed(2))
+    const avgHeartRate = Math.round(75 + Math.random() * 20)
+    const peakHeartRate = Math.round(120 + Math.random() * 25)
+    
+    // Calculate stress/speed index based on pace
+    const stressSpeedIndex = avgWpm > 160 ? parseFloat((Math.min(1, (avgWpm - 160) / 100)).toFixed(2)) : 0
+
     // Build full transcript text
     const fullText = tokens.map((t: any) => t.text).join(' ')
+
+    // Generate a basic title from first few meaningful words
+    // This is a fallback - full AI title generation happens in clever-service
+    const generateQuickTitle = (text: string): string => {
+      const words = text
+        .replace(/[^a-zA-Z\s]/g, '')
+        .split(/\s+/)
+        .filter((w: string) => w.length > 3)
+        .slice(0, 4)
+      
+      if (words.length >= 2) {
+        return words.slice(0, 3).map((w: string) => 
+          w.charAt(0).toUpperCase() + w.slice(1).toLowerCase()
+        ).join(' ') + '...'
+      }
+      
+      return `Session ${new Date().toLocaleDateString()}`
+    }
+    
+    const sessionTitle = generateQuickTitle(fullText)
 
     // Convert tokens to the expected format
     const transcriptTokens: TranscriptToken[] = tokens.map((token: TokenRecord) => ({
@@ -204,7 +233,7 @@ serve(async (req) => {
     const session: Session = {
       id: conversation_id!,
       userId: '',
-      title: `Session ${new Date().toLocaleDateString()}`,
+      title: sessionTitle,
       mode: 'practice',
       context: 'general',
       createdAt: new Date().toISOString(),
@@ -221,10 +250,10 @@ serve(async (req) => {
           avgWpm,
           fillerCount,
           fillerPerMinute,
-          avgHeartRate: null,
-          peakHeartRate: null,
-          movementScore: null,
-          stressSpeedIndex: null,
+          avgHeartRate,
+          peakHeartRate,
+          movementScore,
+          stressSpeedIndex,
         },
         issues: []
       }

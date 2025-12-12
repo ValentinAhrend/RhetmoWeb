@@ -32,7 +32,7 @@ function conversationToSession(conv: ApiConversationEntry): Session {
   return {
     id: conv.conversation_id,
     userId: 'user-1',
-    title: `Session ${date.toLocaleDateString()}`,
+    title: `Session ${date.toLocaleDateString()}`, // Placeholder, will be replaced by analysis title
     mode: 'practice',
     context: 'other',
     createdAt: date.toISOString(),
@@ -56,6 +56,8 @@ async function enrichSessionWithAnalysis(session: Session, status: ApiConversati
     if (analysis) {
       return {
         ...session,
+        // Use AI-generated title if available
+        title: analysis.title || session.title,
         durationSec: analysis.metrics?.durationSec ?? 0,
         analysis,
       };
@@ -72,31 +74,43 @@ async function enrichSessionWithAnalysis(session: Session, status: ApiConversati
  */
 export async function listSessions(): Promise<Session[]> {
   const sessions: Session[] = [];
+  let backendSucceeded = false;
 
   // Fetch all conversations from backend
   if (USE_BACKEND) {
     try {
+      console.log('[listSessions] Fetching conversations from backend...');
       const conversations = await fetchAllConversations();
+      console.log(`[listSessions] Got ${conversations.length} conversations from backend`);
       
-      // Convert to sessions and fetch analysis for finished ones (in parallel)
-      const backendSessions = await Promise.all(
-        conversations.map(async (conv) => {
-          const session = conversationToSession(conv);
-          const enrichedSession = await enrichSessionWithAnalysis(session, conv.status);
-          return withDerivedMetrics(enrichedSession);
-        })
-      );
-      
-      sessions.push(...backendSessions);
+      if (conversations.length > 0) {
+        backendSucceeded = true;
+        
+        // Convert to sessions and fetch analysis for finished ones (in parallel)
+        const backendSessions = await Promise.all(
+          conversations.map(async (conv) => {
+            const session = conversationToSession(conv);
+            const enrichedSession = await enrichSessionWithAnalysis(session, conv.status);
+            return withDerivedMetrics(enrichedSession);
+          })
+        );
+        
+        sessions.push(...backendSessions);
+        console.log(`[listSessions] Processed ${backendSessions.length} backend sessions`);
+      }
     } catch (error) {
-      console.error('Failed to fetch conversations:', error);
+      console.error('[listSessions] Failed to fetch conversations:', error);
     }
   }
 
-  // Always add mock sessions for development/testing
-  await delay();
-  const mockSessions = MOCK_SESSIONS.map(withDerivedMetrics);
-  sessions.push(...mockSessions);
+  // Only add mock sessions if backend failed or returned nothing
+  // This prevents duplicate/stale data from showing
+  if (!backendSucceeded) {
+    console.log('[listSessions] Backend unavailable, using mock sessions');
+    await delay();
+    const mockSessions = MOCK_SESSIONS.map(withDerivedMetrics);
+    sessions.push(...mockSessions);
+  }
 
   // Sort by creation date (newest first)
   return sessions.sort((a, b) => 
@@ -120,10 +134,12 @@ export async function fetchSessionById(id: string): Promise<Session | undefined>
         const analysis = await fetchAnalyzedSession(id);
         
         const date = new Date(conv.timestamp * 1000);
+        // Use AI-generated title if available, fallback to date-based title
+        const sessionTitle = analysis?.title || `Session ${date.toLocaleDateString()}`;
         const session: Session = {
           id: conv.conversation_id,
           userId: 'user-1',
-          title: `Session ${date.toLocaleDateString()}`,
+          title: sessionTitle,
           mode: 'practice',
           context: 'other',
           createdAt: date.toISOString(),
@@ -133,6 +149,28 @@ export async function fetchSessionById(id: string): Promise<Session | undefined>
           analysis: conv.status === 'finished' ? analysis ?? undefined : undefined,
         };
         return withDerivedMetrics(session);
+      } else {
+        // Conversation not in list, but try to fetch analysis directly
+        // This handles cases where the conversation entry failed but analysis exists
+        console.log(`[fetchSessionById] Conversation ${id} not in list, trying direct fetch...`);
+        const analysis = await fetchAnalyzedSession(id);
+        
+        if (analysis) {
+          console.log(`[fetchSessionById] Found analysis for ${id} directly`);
+          const session: Session = {
+            id,
+            userId: 'user-1',
+            title: analysis.title || `Session ${new Date().toLocaleDateString()}`,
+            mode: 'practice',
+            context: 'other',
+            createdAt: new Date().toISOString(),
+            startedAt: new Date().toISOString(),
+            durationSec: analysis.metrics?.durationSec ?? 0,
+            analysisStatus: 'ready',
+            analysis,
+          };
+          return withDerivedMetrics(session);
+        }
       }
     } catch (error) {
       console.error('Failed to fetch session from backend:', error);

@@ -84,11 +84,29 @@ export type CoachingHighlight = {
   severity?: TagSeverity;
 };
 
+// Performance timing data for debugging
+export type AnalysisTiming = {
+  totalMs: number;
+  tokenFetchMs: number;
+  punctuationMs: number;
+  segmentationMs: number;
+  segmentAnalysisMs: number;
+  metricsMs: number;
+  aiCallsMs: number;
+  storageUploadMs: number;
+  tokenCount: number;
+  segmentCount: number;
+  wordCount: number;
+  analyzedAt: string;
+};
+
 export type SessionAnalysis = {
+  title?: string;
   segments: TranscriptSegment[];
   metrics: SessionMetricsSummary;
   issues: SessionIssue[];
   coachingHighlights?: CoachingHighlight[];
+  analysisTiming?: AnalysisTiming;
 };
 
 export type SessionMode = 'practice' | 'live';

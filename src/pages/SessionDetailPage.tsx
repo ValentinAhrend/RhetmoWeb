@@ -67,10 +67,13 @@ export function SessionDetailPage() {
   const issues = session.analysis?.issues ?? [];
   const coachingHighlights = session.analysis?.coachingHighlights ?? [];
   const hasAnalysis = session.analysisStatus === 'ready' && !!session.analysis;
+  
+  // Use AI-generated title from analysis if available, fallback to session title
+  const displayTitle = session.analysis?.title || session.title;
 
   return (
     <AppShell
-      title={session.title}
+      title={displayTitle}
       subtitle={`${session.context} • ${session.mode}`}
       actions={null}
     >

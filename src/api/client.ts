@@ -59,11 +59,28 @@ interface ApiCoachingHighlight {
   severity?: 'low' | 'medium' | 'high';
 }
 
+interface ApiAnalysisTiming {
+  totalMs: number;
+  tokenFetchMs: number;
+  punctuationMs: number;
+  segmentationMs: number;
+  segmentAnalysisMs: number;
+  metricsMs: number;
+  aiCallsMs: number;
+  storageUploadMs: number;
+  tokenCount: number;
+  segmentCount: number;
+  wordCount: number;
+  analyzedAt: string;
+}
+
 interface ApiAnalysis {
+  title?: string;
   segments: ApiSegment[];
   metrics?: ApiMetrics;
   issues?: ApiIssue[];
   coachingHighlights?: ApiCoachingHighlight[];
+  analysisTiming?: ApiAnalysisTiming;
 }
 
 // Live session response (quick-worker) - full session object
@@ -83,10 +100,12 @@ interface ApiLiveSessionResponse {
 }
 
 interface ApiAnalyzedSessionResponse {
+  title?: string;
   segments: ApiSegment[];
   metrics?: ApiMetrics;
   issues?: ApiIssue[];
   coachingHighlights?: ApiCoachingHighlight[];
+  analysisTiming?: ApiAnalysisTiming;
 }
 
 // Conversation list response (dynamic-handler)
@@ -206,10 +225,12 @@ function transformCoachingHighlight(apiHighlight: ApiCoachingHighlight): Coachin
  */
 function transformAnalysis(apiAnalysis: ApiAnalysis): SessionAnalysis {
   return {
+    title: apiAnalysis.title,
     segments: apiAnalysis.segments.map(transformSegment),
     metrics: transformMetrics(apiAnalysis.metrics),
     issues: (apiAnalysis.issues ?? []).map(transformIssue),
     coachingHighlights: apiAnalysis.coachingHighlights?.map(transformCoachingHighlight),
+    analysisTiming: apiAnalysis.analysisTiming, // Pass through timing data for debugging
   };
 }
 
@@ -266,6 +287,8 @@ export async function fetchAnalyzedSession(conversationId?: string): Promise<Ses
       ? { conversation_id: conversationId }
       : { name: 'Functions' };
     
+    console.log(`[API] Fetching analyzed session${conversationId ? ` for ${conversationId}` : ' (latest)'}...`);
+    
     const response = await fetch(`${API_CONFIG.baseUrl}/quick-handler`, {
       method: 'POST',
       headers: API_HEADERS,
@@ -273,20 +296,23 @@ export async function fetchAnalyzedSession(conversationId?: string): Promise<Ses
     });
 
     if (!response.ok) {
-      console.error('Failed to fetch analyzed session:', response.status, response.statusText);
+      console.error(`[API] Failed to fetch analyzed session (${conversationId || 'latest'}):`, response.status, response.statusText);
       return null;
     }
 
     const data: ApiAnalyzedSessionResponse = await response.json();
+    console.log(`[API] Got analysis for ${conversationId || 'latest'}:`, { title: data.title, segments: data.segments?.length, hasTiming: !!data.analysisTiming });
     
     return {
+      title: data.title,
       segments: data.segments.map(transformSegment),
       metrics: transformMetrics(data.metrics),
       issues: (data.issues ?? []).map(transformIssue),
       coachingHighlights: data.coachingHighlights?.map(transformCoachingHighlight),
+      analysisTiming: data.analysisTiming, // Pass through timing data for debugging
     };
   } catch (error) {
-    console.error('Error fetching analyzed session:', error);
+    console.error(`[API] Error fetching analyzed session (${conversationId || 'latest'}):`, error);
     return null;
   }
 }
@@ -312,6 +338,7 @@ export async function checkRecordingStatus(): Promise<{
  */
 export async function fetchAllConversations(): Promise<ApiConversationEntry[]> {
   try {
+    console.log('[API] Fetching all conversations from dynamic-handler...');
     const response = await fetch(`${API_CONFIG.baseUrl}/dynamic-handler`, {
       method: 'POST',
       headers: API_HEADERS,
@@ -319,14 +346,15 @@ export async function fetchAllConversations(): Promise<ApiConversationEntry[]> {
     });
 
     if (!response.ok) {
-      console.error('Failed to fetch conversations:', response.status, response.statusText);
+      console.error('[API] Failed to fetch conversations:', response.status, response.statusText);
       return [];
     }
 
     const data: ApiConversationEntry[] = await response.json();
+    console.log(`[API] Got ${data.length} conversations:`, data.map(c => ({ id: c.conversation_id, status: c.status })));
     return data;
   } catch (error) {
-    console.error('Error fetching conversations:', error);
+    console.error('[API] Error fetching conversations:', error);
     return [];
   }
 }

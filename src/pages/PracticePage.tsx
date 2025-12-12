@@ -1,7 +1,8 @@
 import { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
-import { Mic, MicOff, Loader2, CheckCircle2, AlertCircle, ArrowLeft } from 'lucide-react';
+import { Mic, MicOff, Loader2, CheckCircle2, AlertCircle, ArrowLeft, Bug } from 'lucide-react';
 import { useRecordingService } from '@/hooks/useRecordingService';
+import { API_CONFIG, API_HEADERS } from '@/api/config';
 import clsx from 'clsx';
 
 function formatDuration(seconds: number): string {
@@ -15,11 +16,118 @@ export function PracticePage() {
   const { state, startRecording, stopRecording, checkPermission } = useRecordingService();
   const [isProcessing, setIsProcessing] = useState(false);
   const [processingMessage, setProcessingMessage] = useState('Processing your recording...');
+  
+  // Debug mode state (hidden feature - triple-click on title to toggle)
+  const [debugMode, setDebugMode] = useState(false);
+  const [debugText, setDebugText] = useState('');
+  const [debugClickCount, setDebugClickCount] = useState(0);
 
   // Check microphone permission on mount
   useEffect(() => {
     checkPermission();
   }, [checkPermission]);
+
+  // Triple-click detection for debug mode
+  const handleTitleClick = () => {
+    setDebugClickCount(prev => prev + 1);
+    setTimeout(() => setDebugClickCount(0), 500); // Reset after 500ms
+    if (debugClickCount >= 2) {
+      setDebugMode(prev => !prev);
+      setDebugClickCount(0);
+    }
+  };
+
+  // Submit debug text - creates tokens directly and triggers analysis
+  const handleDebugSubmit = async () => {
+    if (!debugText.trim()) return;
+    
+    setIsProcessing(true);
+    setProcessingMessage('Creating debug session...');
+    
+    try {
+      const conversationId = crypto.randomUUID();
+      console.log('[DEBUG] Created conversation ID:', conversationId);
+      
+      // 1. Update status to 'recording'
+      setProcessingMessage('Setting up conversation...');
+      const statusUrl = `${API_CONFIG.baseUrl}/dynamic-handler`;
+      await fetch(statusUrl, {
+        method: 'POST',
+        headers: API_HEADERS,
+        body: JSON.stringify({ conversation_id: conversationId, status: 'recording' }),
+      });
+      console.log('[DEBUG] Status set to recording');
+      
+      // 2. Create tokens from the pasted text
+      setProcessingMessage('Creating tokens from text...');
+      const words = debugText.trim().split(/\s+/);
+      const tokens = words.map((word, idx) => ({
+        id: `${conversationId}-${idx}-${Math.random().toString(36).slice(2, 10)}`,
+        conversation_id: conversationId,
+        start_ms: idx * 300, // Simulate ~200ms per word (300 WPM pace)
+        end_ms: (idx + 1) * 300 - 50,
+        text: word,
+        tags: [],
+      }));
+      
+      // 3. Insert tokens directly via the Supabase REST API
+      // Extract the base Supabase URL from the functions URL
+      const supabaseUrl = API_CONFIG.baseUrl.replace('/functions/v1', '');
+      
+      const insertResponse = await fetch(`${supabaseUrl}/rest/v1/tokens`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${API_CONFIG.apiKey}`,
+          'apikey': API_CONFIG.apiKey,
+          'Prefer': 'return=minimal',
+        },
+        body: JSON.stringify(tokens),
+      });
+      
+      if (!insertResponse.ok) {
+        const error = await insertResponse.text();
+        throw new Error(`Failed to insert tokens: ${error}`);
+      }
+      console.log('[DEBUG] Inserted', tokens.length, 'tokens');
+      
+      // 4. Update status to 'processing'
+      setProcessingMessage('Triggering analysis...');
+      await fetch(statusUrl, {
+        method: 'POST',
+        headers: API_HEADERS,
+        body: JSON.stringify({ conversation_id: conversationId, status: 'processing' }),
+      });
+      console.log('[DEBUG] Status set to processing');
+      
+      // 5. Trigger clever-service (fire and forget)
+      const cleverUrl = `${API_CONFIG.baseUrl}/clever-service`;
+      fetch(cleverUrl, {
+        method: 'POST',
+        headers: API_HEADERS,
+        body: JSON.stringify({ name: 'Functions' }),
+      }).then(() => console.log('[DEBUG] Clever-service triggered'));
+      
+      // 6. Poll for analysis completion (same as normal flow)
+      setProcessingMessage('Analyzing your speech...');
+      const ready = await waitForAnalysis(conversationId, 60000);
+      
+      if (ready) {
+        setProcessingMessage('Analysis complete! Loading results...');
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } else {
+        setProcessingMessage('Analysis is taking longer than expected. Redirecting...');
+        await new Promise(resolve => setTimeout(resolve, 1000));
+      }
+      
+      navigate(`/sessions/${conversationId}`);
+      
+    } catch (error) {
+      console.error('[DEBUG] Error:', error);
+      setProcessingMessage(`Error: ${error}`);
+      setTimeout(() => setIsProcessing(false), 3000);
+    }
+  };
 
   const handleStartRecording = async () => {
     try {
@@ -27,6 +135,47 @@ export function PracticePage() {
     } catch (error: unknown) {
       console.error('Failed to start recording:', error);
     }
+  };
+
+  // Poll for analysis completion
+  const waitForAnalysis = async (conversationId: string, maxWaitMs = 60000): Promise<boolean> => {
+    const startTime = Date.now();
+    const pollInterval = 2000; // Poll every 2 seconds
+    
+    while (Date.now() - startTime < maxWaitMs) {
+      try {
+        // Try to fetch the analysis directly
+        const response = await fetch(
+          `${API_CONFIG.baseUrl}/quick-handler`,
+          {
+            method: 'POST',
+            headers: API_HEADERS,
+            body: JSON.stringify({ conversation_id: conversationId }),
+          }
+        );
+        
+        if (response.ok) {
+          const data = await response.json();
+          console.log('[PracticePage] Poll response:', { hasSegments: !!data?.segments, segmentCount: data?.segments?.length });
+          // Check if analysis has segments (indicating it's complete)
+          if (data?.segments && data.segments.length > 0) {
+            console.log('[PracticePage] Analysis ready!');
+            return true;
+          }
+        } else {
+          console.log('[PracticePage] Poll response not OK:', response.status);
+        }
+      } catch (error) {
+        console.log('[PracticePage] Polling error, retrying...', error);
+      }
+      
+      // Wait before next poll
+      await new Promise(resolve => setTimeout(resolve, pollInterval));
+      setProcessingMessage(`Analyzing your speech... (${Math.floor((Date.now() - startTime) / 1000)}s)`);
+    }
+    
+    console.log('[PracticePage] Polling timed out');
+    return false;
   };
 
   const handleStopRecording = async () => {
@@ -44,13 +193,19 @@ export function PracticePage() {
       if (conversationId) {
         setProcessingMessage('Analyzing your speech...');
         
-        // Wait for processing, then navigate
-        setTimeout(() => {
-          setProcessingMessage('Preparing your results...');
-          setTimeout(() => {
-            navigate(`/sessions/${conversationId}`);
-          }, 1500);
-        }, 2000);
+        // Poll for analysis completion (up to 60 seconds)
+        const ready = await waitForAnalysis(conversationId, 60000);
+        
+        if (ready) {
+          setProcessingMessage('Analysis complete! Loading results...');
+          // Small delay to show the success message
+          await new Promise(resolve => setTimeout(resolve, 500));
+        } else {
+          setProcessingMessage('Analysis is taking longer than expected. Redirecting...');
+          await new Promise(resolve => setTimeout(resolve, 1000));
+        }
+        
+        navigate(`/sessions/${conversationId}`);
       } else {
         setIsProcessing(false);
       }
@@ -83,13 +238,56 @@ export function PracticePage() {
 
         {/* Header */}
         <div className="mb-8 text-center">
-          <h1 className="font-display text-4xl font-bold text-white">Practice Session</h1>
+          <h1 
+            className="font-display text-4xl font-bold text-white cursor-default select-none"
+            onClick={handleTitleClick}
+          >
+            Practice Session
+          </h1>
           <p className="mt-2 text-slate-400">
             {!state.isRecording && !isProcessing && 'Press the record button to start your practice'}
             {state.isRecording && 'Recording in progress — speak naturally'}
             {isProcessing && processingMessage}
           </p>
+          {debugMode && (
+            <span className="mt-1 inline-flex items-center gap-1 rounded bg-amber-500/20 px-2 py-0.5 text-xs text-amber-400">
+              <Bug className="h-3 w-3" /> Debug Mode
+            </span>
+          )}
         </div>
+
+        {/* Debug Panel - Hidden until activated */}
+        {debugMode && !state.isRecording && !isProcessing && (
+          <div className="mb-6 rounded-xl border border-amber-500/30 bg-amber-500/5 p-4">
+            <div className="mb-3 flex items-center gap-2 text-amber-400">
+              <Bug className="h-4 w-4" />
+              <span className="text-sm font-semibold">Debug: Paste Speech Text</span>
+            </div>
+            <textarea
+              value={debugText}
+              onChange={(e) => setDebugText(e.target.value)}
+              placeholder="Paste your speech text here. It will be converted to tokens and processed through the same backend flow as real recordings..."
+              className="mb-3 h-32 w-full resize-none rounded-lg border border-amber-500/20 bg-slate-950/50 p-3 text-sm text-slate-200 placeholder-slate-500 focus:border-amber-500/50 focus:outline-none"
+            />
+            <div className="flex items-center justify-between">
+              <span className="text-xs text-slate-500">
+                {debugText.trim().split(/\s+/).filter(w => w).length} words
+              </span>
+              <button
+                onClick={handleDebugSubmit}
+                disabled={!debugText.trim()}
+                className={clsx(
+                  'rounded-lg px-4 py-2 text-sm font-semibold transition',
+                  debugText.trim()
+                    ? 'bg-amber-500 text-slate-950 hover:bg-amber-400'
+                    : 'cursor-not-allowed bg-slate-700 text-slate-500'
+                )}
+              >
+                Submit Debug Text
+              </button>
+            </div>
+          </div>
+        )}
 
         {/* Main Recording Area */}
         <div className="glass-panel relative overflow-hidden rounded-3xl p-8">

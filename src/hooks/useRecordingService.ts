@@ -395,13 +395,10 @@ export function useRecordingService(): UseRecordingService {
     // Update status to processing
     await updateConversationStatus(conversationId, 'processing');
 
-    // Trigger analysis
-    await triggerCleverService();
+    // Trigger analysis (fire and forget - clever-service will update status to 'finished' when done)
+    triggerCleverService();
 
-    // Update status to finished after a short delay
-    setTimeout(() => {
-      updateConversationStatus(conversationId, 'finished');
-    }, 1000);
+    // Don't update status to 'finished' here - clever-service handles that when analysis is complete
 
     return conversationId;
   }, [updateConversationStatus, uploadAudioChunk, triggerCleverService]);
